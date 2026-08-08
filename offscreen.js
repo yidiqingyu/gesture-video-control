@@ -1,0 +1,405 @@
+// 新版 MediaPipe Tasks Vision（ES Module 引入）
+import { FilesetResolver, HandLandmarker } from './vendor/mediapipe/vision_bundle.mjs';
+
+'use strict';
+
+const GestureMath = globalThis.GestureMath;
+
+// ============================================================
+// offscreen.js —— 后台手势识别引擎（在不可见的离屏文档中运行）
+//
+// 职责：
+//   1. 获取摄像头并加载 MediaPipe Hands，逐帧识别手势
+//   2. 识别到动作后，把指令发给目标标签页的 content script
+//   3. 把当前手势 / 模型状态 / 页面视频状态通知给弹窗
+//   4. 按需给弹窗发送低帧率预览帧（弹窗关闭后自动停止发送）
+//
+// 这样设计后，用户关闭弹窗也能继续用手势控制视频，且不遮挡画面。
+// ============================================================
+
+'use strict';
+
+// ---------- 元素与状态 ----------
+const els = {
+  camera: document.getElementById('camera')
+};
+
+const state = {
+  targetTabId: null,     // 被控制的视频标签页
+  controlOn: false,      // 手势控制开关（由弹窗同步）
+  hands: null,           // MediaPipe Hands 实例
+  modelReady: false,
+  cameraStream: null,
+  running: false,
+  processing: false,     // 防止同一帧重复处理
+  lastActionTime: 0,     // 一次性手势防抖
+  lastVolumeTime: 0,     // 音量长按重复
+  stablePose: '',
+  stableFrames: 0,
+  snapPinched: false,    // 打响指跳变检测
+  palmHistory: [],       // 手掌上下挥动检测
+  debounceMs: 900,
+  volumeStep: 0.1,
+  volumeRepeatMs: 650,
+  currentGesture: '等待识别…',
+  currentDetail: '',
+  handDetected: false,
+  frames: 0,             // 已成功处理的帧数（诊断用：判断引擎是否在跑）
+  frameErrors: 0,        // 连续失败的帧数（诊断用：静默失败不再吞掉）
+  lastDebugTime: 0,      // 最近一次发送“引擎视角”诊断图的时间
+  debugTimer: null,      // 诊断图定时器
+  errorText: '',
+  videoStatus: { text: '正在检测当前页面…', kind: '' }
+};
+
+// ============================================================
+// 消息处理（来自弹窗）
+// ============================================================
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || typeof message.type !== 'string') return;
+  switch (message.type) {
+    case 'OFFSCREEN_START':
+      if (message.tabId) state.targetTabId = message.tabId;
+      state.controlOn = true;
+      if (typeof message.volumeStep === 'number') state.volumeStep = message.volumeStep;
+      if (typeof message.debounceMs === 'number') state.debounceMs = message.debounceMs;
+      if (typeof message.volumeRepeatMs === 'number') state.volumeRepeatMs = message.volumeRepeatMs;
+      startEngine();
+      sendResponse({ ok: true });
+      break;
+    case 'OFFSCREEN_STOP':
+      state.controlOn = false;
+      stopEngine();
+      sendResponse({ ok: true });
+      break;
+    case 'OFFSCREEN_GET_STATUS':
+      sendResponse(buildStatus());
+      break;
+  }
+});
+
+// 通知弹窗：本离屏文档已加载完成（避免消息在脚本加载完成前丢失）
+chrome.runtime.sendMessage({ type: 'OFFSCREEN_READY' }).catch(() => {});
+
+// ============================================================
+// 启动 / 停止
+// ============================================================
+async function startEngine() {
+  if (state.running) return;
+  state.running = true;
+  state.errorText = '';
+  notify();
+  try {
+    if (!state.cameraStream) {
+      state.cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+        audio: false
+      });
+    }
+    els.camera.srcObject = state.cameraStream;
+    await els.camera.play();
+    await loadHandsModel();
+    await refreshVideoStatus();
+  } catch (err) {
+    state.running = false;
+    state.errorText = '摄像头启动失败（错误码：' + (err && err.name || '未知') + '）：' + ((err && err.message) || err);
+    notify();
+  }
+}
+
+function stopEngine() {
+  state.running = false;
+  state.processing = false;
+  if (state.cameraStream) {
+    state.cameraStream.getTracks().forEach((t) => t.stop());
+    state.cameraStream = null;
+  }
+  state.hands = null;
+  state.modelReady = false;
+  if (state.debugTimer) {
+    clearInterval(state.debugTimer);
+    state.debugTimer = null;
+  }
+  state.currentGesture = '等待识别…';
+  state.errorText = '';
+  notify();
+}
+
+// ============================================================
+// MediaPipe Hands
+// ============================================================
+async function loadHandsModel() {
+  if (typeof FilesetResolver !== 'function' || typeof HandLandmarker !== 'function') {
+    state.errorText = 'MediaPipe 加载失败：vendor/mediapipe/vision_bundle.mjs 缺失';
+    notify();
+    return;
+  }
+  try {
+    // 初始化 wasm 运行时
+    const fileset = await FilesetResolver.forVisionTasks(
+      chrome.runtime.getURL('vendor/mediapipe/wasm')
+    );
+    const baseOptions = {
+      modelAssetPath: chrome.runtime.getURL('vendor/mediapipe/hand_landmarker.task')
+    };
+    const commonOptions = {
+      baseOptions: baseOptions,
+      runningMode: 'VIDEO',
+      numHands: 2,
+      minHandDetectionConfidence: 0.4,
+      minHandPresenceConfidence: 0.4,
+      minTrackingConfidence: 0.4
+    };
+    // GPU 优先；部分显卡/驱动上 GPU 委托失败时自动回退 CPU
+    let landmarker;
+    try {
+      landmarker = await HandLandmarker.createFromOptions(fileset, {
+        ...commonOptions,
+        baseOptions: { ...baseOptions, delegate: 'GPU' }
+      });
+    } catch (gpuErr) {
+      landmarker = await HandLandmarker.createFromOptions(fileset, {
+        ...commonOptions,
+        baseOptions: { ...baseOptions, delegate: 'CPU' }
+      });
+    }
+    state.hands = landmarker;
+    state.modelReady = true;
+    // 检测不到手时，周期性把引擎实际看到的画面发给弹窗/悬浮窗（诊断用）
+    if (state.debugTimer) clearInterval(state.debugTimer);
+    state.debugTimer = setInterval(maybeSendDebugSnapshot, 2500);
+    notify();
+    requestAnimationFrame(processFrame);
+  } catch (err) {
+    state.errorText = '模型加载失败：' + ((err && err.message) || err);
+    notify();
+  }
+}
+
+async function processFrame() {
+  if (!state.running) return;
+  if (!state.processing && state.hands && els.camera.readyState >= 2) {
+    state.processing = true;
+    try {
+      // 新版 API：同步检测当前视频帧（时间戳需单调递增）
+      const result = state.hands.detectForVideo(els.camera, performance.now());
+      state.frames += 1;
+      if (state.frameErrors >= 10) {
+        state.frameErrors = 0;
+        state.errorText = '';
+        notify();
+      }
+      onHandsResults(result);
+    } catch (e) {
+      // 单帧失败不中断循环，但连续失败时上报，避免“静默不识别”
+      state.frameErrors += 1;
+      if (state.frameErrors === 10 || state.frameErrors % 50 === 0) {
+        state.errorText = '识别引擎异常：' + ((e && e.message) || e);
+        notify();
+      }
+    }
+    state.processing = false;
+  }
+  requestAnimationFrame(processFrame);
+}
+
+// 引擎视角诊断图：当检测不到手时，把后台摄像头当前帧发给界面
+function maybeSendDebugSnapshot() {
+  if (!state.modelReady || state.handDetected) return;
+  const now = Date.now();
+  if (now - state.lastDebugTime < 2500) return;
+  state.lastDebugTime = now;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 320;
+    canvas.height = 240;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(els.camera, 0, 0, 320, 240);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+    chrome.runtime.sendMessage({ type: 'OFFSCREEN_SNAPSHOT', dataUrl: dataUrl }).catch(() => {});
+  } catch (e) {
+    // 单帧诊断失败忽略
+  }
+}
+
+// ============================================================
+// 手势分类与动作触发（防抖 / 稳定帧 / 连续调节）
+// ============================================================
+function onHandsResults(results) {
+  if (!state.running) return;
+
+  // 新版 HandLandmarker 的结果结构：results.landmarks = [每只手的 21 个关键点]
+  const hands = results && results.landmarks;
+  if (!hands || hands.length === 0) {
+    if (state.handDetected) {
+      state.handDetected = false;
+      notify();
+    }
+    setGesture('未检测到手', '请将手掌完整放入摄像头画面');
+    state.snapPinched = false;
+    state.palmHistory = [];
+    state.stablePose = '';
+    state.stableFrames = 0;
+    return;
+  }
+
+  const lm = hands[0];
+  const pose = GestureMath.classifyPose(lm);
+  if (!state.handDetected) {
+    state.handDetected = true;
+    notify();
+  }
+  setGesture(pose.name, pose.detail);
+
+  if (pose.name === state.stablePose) {
+    state.stableFrames += 1;
+  } else {
+    state.stablePose = pose.name;
+    state.stableFrames = 1;
+  }
+  const stable = state.stableFrames >= 3;
+  const now = Date.now();
+
+  // 打响指：捏合跳变
+  if (pose.snap) {
+    if (!state.snapPinched && stable) {
+      state.snapPinched = true;
+      if (now - state.lastActionTime >= state.debounceMs) {
+        state.lastActionTime = now;
+        triggerAction('play_pause', '打响指');
+      }
+    }
+  } else {
+    state.snapPinched = false;
+  }
+
+  // 食指上/下：长按连续调音量
+  if (stable && (pose.name === '食指向上' || pose.name === '食指向下')) {
+    if (now - state.lastVolumeTime >= state.volumeRepeatMs) {
+      state.lastVolumeTime = now;
+      triggerAction(pose.name === '食指向上' ? 'volume_up' : 'volume_down', pose.name);
+    }
+  } else {
+    state.lastVolumeTime = 0;
+  }
+
+  // 握拳：静音切换
+  if (stable && pose.name === '握拳' && now - state.lastActionTime >= state.debounceMs) {
+    state.lastActionTime = now;
+    triggerAction('mute', '握拳');
+  }
+
+  // 手掌张开：上下挥动切集
+  if (pose.name === '手掌张开') {
+    const palmY = (lm[0].y + lm[9].y) / 2;
+    state.palmHistory.push(palmY);
+    if (state.palmHistory.length > 8) state.palmHistory.shift();
+    if (stable && state.palmHistory.length >= 8 && now - state.lastActionTime >= state.debounceMs) {
+      const dy = state.palmHistory[state.palmHistory.length - 1] - state.palmHistory[0];
+      if (dy <= -0.04) {
+        state.lastActionTime = now;
+        state.palmHistory = [];
+        triggerAction('next', '手掌上挥');
+      } else if (dy >= 0.04) {
+        state.lastActionTime = now;
+        state.palmHistory = [];
+        triggerAction('prev', '手掌下挥');
+      }
+    }
+  } else {
+    state.palmHistory = [];
+  }
+}
+
+function setGesture(name, detail) {
+  detail = detail || '';
+  if (name !== state.currentGesture || detail !== state.currentDetail) {
+    state.currentGesture = name;
+    state.currentDetail = detail;
+    notify();
+  }
+}
+
+// ============================================================
+// 发送动作到 content script（操作视频）
+// ============================================================
+async function triggerAction(action, gestureName) {
+  if (!state.controlOn || !state.targetTabId) return;
+  try {
+    // 离屏文档只能使用 chrome.runtime，因此通过 Service Worker 转发给页面
+    const resp = await chrome.runtime.sendMessage({
+      type: 'TAB_MESSAGE',
+      tabId: state.targetTabId,
+      payload: {
+        type: 'GESTURE_ACTION',
+        action: action,
+        gesture: gestureName,
+        volumeStep: state.volumeStep
+      }
+    });
+    if (resp && resp.status === 'no_video') {
+      state.videoStatus = { text: '当前页面未检测到视频', kind: 'error' };
+    } else if (resp && resp.status === 'ok') {
+      await refreshVideoStatus();
+      return;
+    } else if (resp && resp.status === 'error') {
+      state.videoStatus = { text: '⚠️ 无法连接页面（请重新打开扩展图标后再试）', kind: 'warn' };
+    }
+  } catch (e) {
+    state.videoStatus = { text: '⚠️ 无法操作页面（请重新打开扩展图标后再试）', kind: 'warn' };
+  }
+  notify();
+}
+
+async function refreshVideoStatus() {
+  if (!state.targetTabId) return;
+  try {
+    // 同样通过 Service Worker 转发
+    const resp = await chrome.runtime.sendMessage({
+      type: 'TAB_MESSAGE',
+      tabId: state.targetTabId,
+      payload: { type: 'GET_STATUS' }
+    });
+    if (resp && resp.type === 'STATUS') {
+      if (resp.hasVideo) {
+        const vol = Math.round((resp.volume || 0) * 100);
+        state.videoStatus = {
+          text: '✅ 已检测到视频（' + resp.host + '）｜' +
+                (resp.playing ? '▶ 播放中' : '⏸ 已暂停') +
+                '｜音量 ' + vol + '%' +
+                (resp.muted ? '｜🔇 已静音' : ''),
+          kind: 'ok'
+        };
+      } else {
+        state.videoStatus = { text: '当前页面未检测到视频', kind: 'error' };
+      }
+    } else if (resp && resp.status === 'error') {
+      state.videoStatus = { text: '无法连接页面（请重新打开扩展图标后开启）', kind: 'warn' };
+    }
+  } catch (e) {
+    state.videoStatus = { text: '无法连接页面（请重新打开扩展图标后开启）', kind: 'warn' };
+  }
+  notify();
+}
+
+// ============================================================
+// 状态通知 / 预览帧（发给弹窗）
+// ============================================================
+function buildStatus() {
+  return {
+    type: 'OFFSCREEN_UPDATE',
+    gesture: state.currentGesture,
+    detail: state.currentDetail,
+    handDetected: state.handDetected,
+    frames: state.frames,
+    frameErrors: state.frameErrors,
+    running: state.running,
+    modelReady: state.modelReady,
+    errorText: state.errorText,
+    videoStatus: state.videoStatus
+  };
+}
+
+function notify() {
+  chrome.runtime.sendMessage(buildStatus()).catch(() => {});
+}

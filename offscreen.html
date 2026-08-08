@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>手势识别（后台）</title>
+</head>
+<body>
+  <!--
+    离屏文档（不可见）：在这里运行摄像头 + MediaPipe 手势识别。
+    这样用户关闭弹窗后，手势控制依然在后台生效，不遮挡视频。
+    video 元素必须保持“正在播放”才能供 MediaPipe 取帧，
+    所以把它放在屏幕外并设得极小（而非 display:none）。
+  -->
+  <video id="camera" autoplay muted playsinline
+         style="position:fixed;top:-10000px;left:-10000px;width:320px;height:240px;"></video>
+
+  <!-- 手势分类逻辑（经典脚本，挂到全局供模块使用） -->
+  <script src="gesture.js"></script>
+  <!-- 新版 MediaPipe Tasks Vision 手部检测（ES Module） -->
+  <script type="module" src="offscreen.js"></script>
+</body>
+</html>

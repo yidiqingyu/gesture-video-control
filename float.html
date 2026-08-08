@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>手势视频控制</title>
+  <link rel="stylesheet" href="float.css">
+</head>
+<body>
+  <!-- 正常状态：悬浮窗主体 -->
+  <div id="full" class="full">
+    <!-- 标题栏（可拖动） -->
+    <div id="titlebar" class="titlebar">
+      <span class="title">🖐️ 手势视频控制</span>
+      <span class="actions">
+        <button id="btn-preview" title="显示 / 隐藏摄像头画面">👁</button>
+        <button id="btn-min" title="最小化为悬浮球">—</button>
+        <button id="btn-close" title="关闭悬浮窗（识别继续后台运行）">✕</button>
+      </span>
+    </div>
+
+    <!-- 摄像头预览（画面来自后台识别引擎，可选择隐藏） -->
+    <div class="preview-wrap">
+      <video id="preview" autoplay muted playsinline></video>
+      <div id="preview-placeholder" class="preview-placeholder">正在打开摄像头预览…</div>
+    </div>
+
+    <!-- 状态与控制 -->
+    <div class="body">
+      <div class="gesture-row">
+        <span id="gesture-emoji" class="gesture-emoji">🖐️</span>
+        <div class="gesture-info">
+          <span class="label">当前手势</span>
+          <span id="gesture-name" class="gesture-name">等待识别…</span>
+          <span id="gesture-detail" class="gesture-detail"></span>
+        </div>
+      </div>
+
+      <div id="model-status" class="status">正在连接后台识别…</div>
+      <div id="video-status" class="status">正在检测当前页面…</div>
+      <div id="engine-view-wrap" class="engine-view-wrap" hidden>
+        <span class="engine-view-label">引擎视角（后台识别实际看到的画面）</span>
+        <img id="engine-view" class="engine-view" alt="引擎视角">
+      </div>
+
+      <label class="switch-row">
+        <span class="switch-label">手势控制</span>
+        <input type="checkbox" id="control-toggle">
+        <span class="switch-track"><span class="switch-thumb"></span></span>
+      </label>
+
+      <button id="grant-button" class="grant-button" hidden>📷 在标签页中授权摄像头</button>
+    </div>
+  </div>
+
+  <!-- 最小化后的悬浮球（点击恢复） -->
+  <div id="pill" class="pill" hidden>
+    <span id="pill-icon" class="pill-icon">🖐️</span>
+  </div>
+
+  <script src="float.js"></script>
+</body>
+</html>

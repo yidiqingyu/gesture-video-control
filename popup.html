@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>手势视频控制</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <!-- 顶部标题 -->
+  <header class="header">
+    <span class="logo">🖐️</span>
+    <div>
+      <h1>手势视频控制</h1>
+      <p class="subtitle">B 站 / YouTube / 任意网页视频</p>
+    </div>
+  </header>
+
+  <!-- 后台识别预览（画面来自离屏文档，弹窗关闭后识别仍在后台运行） -->
+  <div class="camera-wrap">
+    <video id="preview" autoplay muted playsinline></video>
+    <div id="camera-placeholder" class="camera-placeholder">打开「手势控制」后显示画面</div>
+  </div>
+  <button id="grant-button" class="grant-button" hidden>📷 在标签页中授权摄像头</button>
+  <button id="open-float" class="open-float">🪟 打开悬浮窗</button>
+
+  <!-- 当前手势 -->
+  <div class="gesture-row">
+    <span id="gesture-emoji" class="gesture-emoji">🖐️</span>
+    <div class="gesture-info">
+      <span class="label">当前手势</span>
+      <span id="gesture-name" class="gesture-name">等待识别…</span>
+      <span id="gesture-detail" class="gesture-detail"></span>
+    </div>
+  </div>
+
+  <!-- 模型 / 页面状态 -->
+  <div id="model-status" class="status">正在连接后台识别…</div>
+  <div id="video-status" class="status">正在检测当前页面…</div>
+  <div id="engine-view-wrap" class="engine-view-wrap" hidden>
+    <span class="engine-view-label">引擎视角（后台识别实际看到的画面）</span>
+    <img id="engine-view" class="engine-view" alt="引擎视角">
+  </div>
+
+  <!-- 开关 -->
+  <label class="switch-row">
+    <span class="switch-label">手势控制</span>
+    <input type="checkbox" id="control-toggle">
+    <span class="switch-track"><span class="switch-thumb"></span></span>
+  </label>
+
+  <p class="hint">
+    💡 识别在<strong>后台</strong>运行：开启后可关闭本弹窗，不影响手势控制。<br>
+    摄像头使用时，工具栏会显示相机使用指示。<br>
+    摄像头画面仅在本机处理，不会上传。
+  </p>
+
+  <!-- 弹窗只负责遥控与状态显示；识别引擎在 offscreen.html 中运行 -->
+  <script src="popup.js"></script>
+</body>
+</html>

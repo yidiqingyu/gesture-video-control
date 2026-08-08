@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "手势视频控制 · Gesture Video Control",
+  "version": "1.0.0",
+  "description": "用摄像头手势控制网页视频播放：打响指播放/暂停，握拳静音，食指上下调音量，手掌上下挥动切换视频。支持 B 站、YouTube 等网站。",
+  "minimum_chrome_version": "110",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "offscreen"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "手势视频控制",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
+}

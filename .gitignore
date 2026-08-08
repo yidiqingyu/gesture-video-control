@@ -1,0 +1,10 @@
+# 打包扩展时生成的私钥 —— 千万不能提交到 GitHub！
+*.pem
+
+# 打包产物（.crx 建议通过 GitHub Release 上传，而不是提交到仓库）
+*.crx
+
+# 系统 / 编辑器文件
+Thumbs.db
+.DS_Store
+*.log
