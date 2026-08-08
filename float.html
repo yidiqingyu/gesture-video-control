@@ -21,6 +21,7 @@
     <!-- 摄像头预览（画面来自后台识别引擎，可选择隐藏） -->
     <div class="preview-wrap">
       <video id="preview" autoplay muted playsinline></video>
+      <canvas id="overlay" class="overlay"></canvas>
       <div id="preview-placeholder" class="preview-placeholder">正在打开摄像头预览…</div>
     </div>
 
@@ -57,6 +58,13 @@
     <span id="pill-icon" class="pill-icon">🖐️</span>
   </div>
 
-  <script src="float.js"></script>
+  <!-- 页面内识别用的独立摄像头流（保持渲染，最小化/隐藏预览也不影响识别） -->
+  <video id="rec-video" autoplay muted playsinline
+         style="position:fixed;top:-10000px;left:-10000px;width:320px;height:240px;"></video>
+
+  <!-- 手势分类逻辑 -->
+  <script src="gesture.js"></script>
+  <!-- 悬浮窗控制器（ES Module：从本地 vision_bundle.mjs 引入 MediaPipe） -->
+  <script type="module" src="float.js"></script>
 </body>
 </html>

@@ -55,6 +55,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const url = chrome.runtime.getURL('float.html' + (message.tabId ? '?tab=' + encodeURIComponent(message.tabId) : ''));
     (async () => {
       try {
+        // 已有一个悬浮窗时，直接聚焦它，避免两个页面引擎同时运行
+        const reg = await chrome.storage.local.get('floatWindowId');
+        if (reg.floatWindowId) {
+          try {
+            await chrome.windows.get(reg.floatWindowId);
+            await chrome.windows.update(reg.floatWindowId, { focused: true });
+            sendResponse({ ok: true, reused: true });
+            return;
+          } catch (e) {
+            // 记录中的窗口已关闭，继续创建新窗口
+            await chrome.storage.local.set({ floatWindowId: null });
+          }
+        }
         const win = await chrome.windows.getLastFocused();
         const created = await chrome.windows.create({
           url: url,
@@ -66,6 +79,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           top: (win.top || 0) + 80,
           focused: true
         });
+        if (created && created.id) {
+          await chrome.storage.local.set({ floatWindowId: created.id });
+        }
         sendResponse({ ok: !!created });
       } catch (e) {
         // 某些环境不允许创建悬浮窗时，退化为普通标签页
@@ -84,4 +100,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'ERROR_REPORT') {
     console.warn('[手势视频控制] 内容脚本上报错误：', message.error);
   }
+});
+
+// 悬浮窗被关闭时，清理记录的窗口 id（下次可重新创建）
+chrome.windows.onRemoved.addListener((windowId) => {
+  chrome.storage.local.get('floatWindowId', (data) => {
+    if (data.floatWindowId === windowId) {
+      chrome.storage.local.set({ floatWindowId: null });
+    }
+  });
 });

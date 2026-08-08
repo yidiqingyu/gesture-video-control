@@ -14,9 +14,9 @@
   <video id="camera" autoplay muted playsinline
          style="position:fixed;top:-10000px;left:-10000px;width:320px;height:240px;"></video>
 
-  <!-- 手势分类逻辑（经典脚本，挂到全局供模块使用） -->
+  <!-- 手势分类逻辑（经典脚本，挂到全局） -->
   <script src="gesture.js"></script>
-  <!-- 新版 MediaPipe Tasks Vision 手部检测（ES Module） -->
+  <!-- 后台识别引擎（ES Module：从本地 vision_bundle.mjs 引入 MediaPipe） -->
   <script type="module" src="offscreen.js"></script>
 </body>
 </html>

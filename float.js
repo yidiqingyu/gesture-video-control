@@ -1,16 +1,19 @@
 // ============================================================
 // float.js —— 悬浮窗（悬浮球）控制器
 //
-// 悬浮窗只是一个“视图 + 遥控器”：
-//   - 摄像头与手势识别仍在不可见的离屏文档中运行，
-//     因此隐藏画面 / 最小化 / 关闭悬浮窗都不影响手势控制；
-//   - 预览画面由后台引擎按需发送（约 5 帧/秒）。
+// 悬浮窗是一个“视图 + 遥控器 + 识别引擎”：
+//   - 悬浮窗打开时，识别引擎直接在悬浮窗页面运行（画面更稳定）；
+//   - 关闭悬浮窗后，自动交回不可见的离屏文档继续识别，
+//     因此隐藏画面 / 最小化 / 关闭悬浮窗都不中断手势控制。
 //
 // 按钮：
 //   👁 显示 / 隐藏摄像头画面
 //   —  最小化为悬浮球（窗口缩到 72×72，识别不中断）
 //   ✕  关闭悬浮窗（识别不中断）
 // ============================================================
+
+// 官方 MediaPipe Tasks Vision（ES Module，随扩展本地打包）
+import { FilesetResolver, HandLandmarker } from './vendor/mediapipe/vision_bundle.mjs';
 
 'use strict';
 
@@ -23,6 +26,8 @@ const els = {
   btnClose: document.getElementById('btn-close'),
   preview: document.getElementById('preview'),
   previewPlaceholder: document.getElementById('preview-placeholder'),
+  overlay: document.getElementById('overlay'),
+  recVideo: document.getElementById('rec-video'),
   gestureEmoji: document.getElementById('gesture-emoji'),
   gestureName: document.getElementById('gesture-name'),
   gestureDetail: document.getElementById('gesture-detail'),
@@ -43,7 +48,24 @@ const state = {
   debounceMs: 900,
   volumeStep: 0.1,
   volumeRepeatMs: 650,
-  statusTimer: null
+  statusTimer: null,
+  // 页面内识别引擎状态
+  recRunning: false,
+  landmarker: null,
+  recStream: null,
+  recFrames: 0,
+  recFrameErrors: 0,
+  recProcessing: false,
+  recTimer: null,        // 帧循环定时器（窗口被遮挡/离屏时 rAF 可能停摆，用定时器驱动）
+  framesTimer: null,
+  usedCpuDelegate: false,
+  gpuFallbackTimer: null,
+  lastActionTime: 0,
+  lastVolumeTime: 0,
+  stablePose: '',
+  stableFrames: 0,
+  snapPinched: false,
+  palmHistory: []
 };
 
 const WIN_W = 300;
@@ -85,6 +107,23 @@ function init() {
     const win = await chrome.windows.getCurrent();
     state.winId = win.id;
 
+    // 已存在另一个悬浮窗时，关闭本窗口，避免两个页面引擎同时触发动作
+    const winReg = await chrome.storage.local.get('floatWindowId');
+    if (winReg.floatWindowId && winReg.floatWindowId !== win.id) {
+      try {
+        await chrome.windows.get(winReg.floatWindowId);
+        setModelStatus('已有悬浮窗在运行，本窗口即将关闭');
+        setTimeout(() => {
+          if (state.winId) chrome.windows.remove(state.winId).catch(() => {});
+        }, 300);
+        return;
+      } catch (e) {
+        // 记录中的窗口已关闭（如浏览器异常退出留下的残留），清理后继续
+        await chrome.storage.local.set({ floatWindowId: null }).catch(() => {});
+      }
+    }
+    chrome.storage.local.set({ floatWindowId: win.id }).catch(() => {});
+
     const settings = await chrome.storage.local.get(['controlOn', 'previewShown', 'debounceMs', 'volumeStep', 'volumeRepeatMs']);
     state.controlOn = !!settings.controlOn;
     state.previewShown = settings.previewShown !== false;
@@ -98,12 +137,27 @@ function init() {
     state.statusTimer = setInterval(refreshStatus, 2500);
 
     if (state.controlOn) {
-      await startBackground();
+      await startRecognition();
     } else {
-      setModelStatus('手势控制已关闭：打开开关即可在后台启动识别');
+      setModelStatus('手势控制已关闭：打开开关即可开始识别');
     }
   })().catch((e) => {
     setModelStatus('❌ 悬浮窗初始化失败：' + ((e && e.message) || e));
+  });
+
+  // 弹窗等其他界面修改开关时，同步本窗口的识别引擎
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes.controlOn) return;
+    const on = !!changes.controlOn.newValue;
+    if (on === state.controlOn) return;
+    state.controlOn = on;
+    els.toggle.checked = on;
+    if (on) {
+      startRecognition();
+    } else {
+      stopRecognition();
+      setModelStatus('手势控制已关闭');
+    }
   });
 }
 
@@ -142,7 +196,8 @@ async function minimize() {
   if (state.winId) {
     await chrome.windows.update(state.winId, { width: WIN_W_MIN, height: WIN_H_MIN });
   }
-  stopPreview();
+  // 控制开启时保留摄像头流（识别继续），只把窗口缩成悬浮球
+  if (!state.controlOn) stopPreview();
 }
 
 async function restore() {
@@ -170,7 +225,8 @@ function applyPreviewVisibility() {
     els.previewPlaceholder.style.display = 'none';
     startPreview();
   } else {
-    stopPreview();
+    // 控制开启时保留摄像头流（识别继续在后台画面运行），只隐藏预览
+    if (!state.controlOn) stopPreview();
     els.previewPlaceholder.style.display = 'flex';
     els.previewPlaceholder.textContent = state.previewShown ? '正在打开摄像头预览…' : '摄像头画面已隐藏';
   }
@@ -181,6 +237,8 @@ function applyPreviewVisibility() {
 // ============================================================
 function onRuntimeMessage(message) {
   if (!message || typeof message.type !== 'string') return;
+  // 页面内识别运行期间，忽略后台引擎的状态（避免互相覆盖）
+  if (state.recRunning) return;
   if (message.type === 'OFFSCREEN_UPDATE') {
     applyBackgroundStatus(message);
   } else if (message.type === 'OFFSCREEN_SNAPSHOT') {
@@ -192,13 +250,14 @@ function onRuntimeMessage(message) {
 }
 
 function applyBackgroundStatus(s) {
+  if (state.recRunning) return;
   if (s.gesture) {
     els.gestureName.textContent = s.gesture;
     els.gestureEmoji.textContent = GESTURE_EMOJI[s.gesture] || '🖐️';
   }
   if (els.gestureDetail) {
     if (s.handDetected === false && s.running) {
-      els.gestureDetail.textContent = '未检测到手：请将手掌完整放入摄像头画面';
+      els.gestureDetail.textContent = '未检测到手：把张开的手掌放到摄像头正前方，预览里能看到整只手';
     } else {
       els.gestureDetail.textContent = s.detail || '';
     }
@@ -338,9 +397,10 @@ async function onToggleChange() {
   state.controlOn = els.toggle.checked;
   await chrome.storage.local.set({ controlOn: state.controlOn });
   if (state.controlOn) {
-    await startBackground();
+    await startRecognition();
   } else {
-    await stopBackground();
+    stopRecognition();
+    setModelStatus('手势控制已关闭');
   }
 }
 
@@ -390,10 +450,378 @@ function stopPreview() {
   }
 }
 
-// 关闭 / 卸载时：暂停预览帧
+// ============================================================
+// 页面内识别引擎（在悬浮窗页面直接跑 MediaPipe，
+// 使用和预览一样可用的摄像头流，绕开后台离屏文档的兼容问题）
+// ============================================================
+async function startRecognition() {
+  if (state.recRunning) return;
+  const injected = await ensureContentScript();
+  if (!injected) {
+    revertToggle();
+    return;
+  }
+  state.recRunning = true;
+  // 暂停后台离屏引擎，避免两处同时触发动作
+  sendToBackground({ type: 'OFFSCREEN_STOP' });
+  setModelStatus('⏳ 正在启动识别引擎…');
+  try {
+    if (typeof FilesetResolver !== 'function' || typeof HandLandmarker !== 'function') {
+      setModelStatus('⏳ 正在加载 MediaPipe 运行时…');
+      await waitForVision();
+    }
+    if (typeof FilesetResolver !== 'function' || typeof HandLandmarker !== 'function') {
+      throw new Error('MediaPipe 未加载（vendor/mediapipe/vision_bundle.js）');
+    }
+
+    // 优先复用预览流（这台机器上已验证可用），避免同时打开多路摄像头
+    let stream = els.preview.srcObject;
+    if (!stream || !stream.getVideoTracks || stream.getVideoTracks().length === 0) {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+        audio: false
+      });
+      if (!els.preview.srcObject) {
+        els.preview.srcObject = stream;
+      }
+    }
+    state.recStream = stream;
+    els.recVideo.srcObject = state.recStream;
+    await els.recVideo.play();
+
+    const fileset = await FilesetResolver.forVisionTasks(
+      chrome.runtime.getURL('vendor/mediapipe/wasm')
+    );
+    const baseOptions = {
+      modelAssetPath: chrome.runtime.getURL('vendor/mediapipe/hand_landmarker.task')
+    };
+    const commonOptions = {
+      baseOptions: baseOptions,
+      runningMode: 'VIDEO',
+      numHands: 2,
+      minHandDetectionConfidence: 0.3,
+      minHandPresenceConfidence: 0.3,
+      minTrackingConfidence: 0.3
+    };
+    let landmarker;
+    let usedCpu = false;
+    try {
+      landmarker = await HandLandmarker.createFromOptions(fileset, {
+        ...commonOptions,
+        baseOptions: { ...baseOptions, delegate: 'GPU' }
+      });
+    } catch (gpuErr) {
+      landmarker = await HandLandmarker.createFromOptions(fileset, {
+        ...commonOptions,
+        baseOptions: { ...baseOptions, delegate: 'CPU' }
+      });
+      usedCpu = true;
+    }
+    state.landmarker = landmarker;
+    state.usedCpuDelegate = usedCpu;
+    scheduleRecCpuFallback();
+    setModelStatus('✅ 识别运行中（页面引擎' + (usedCpu ? '·CPU' : '·GPU') + '）');
+    document.body.classList.add('running');
+    // 声明“页面引擎在运行”，弹窗据此不再启动后台引擎，避免重复触发
+    chrome.storage.local.set({ engineOwner: 'float' }).catch(() => {});
+    state.recTimer = setTimeout(recLoop, 33);
+    // 周期性显示已处理帧数，便于确认引擎是否在跑
+    clearInterval(state.framesTimer);
+    state.framesTimer = setInterval(() => {
+      setModelStatus('✅ 识别运行中（页面引擎' + (state.usedCpuDelegate ? '·CPU' : '·GPU') + '）｜已处理 ' + state.recFrames + ' 帧');
+    }, 2000);
+  } catch (err) {
+    state.recRunning = false;
+    setModelStatus('❌ 识别引擎加载失败（' + (err && err.name || 'Error') + '）：' + ((err && err.message) || err));
+    revertToggle();
+  }
+}
+
+function stopRecognition() {
+  state.recRunning = false;
+  if (state.recTimer) clearTimeout(state.recTimer);
+  state.recTimer = null;
+  if (state.framesTimer) clearInterval(state.framesTimer);
+  state.framesTimer = null;
+  if (state.gpuFallbackTimer) clearTimeout(state.gpuFallbackTimer);
+  state.gpuFallbackTimer = null;
+  if (state.landmarker) {
+    try { state.landmarker.close(); } catch (e) { /* 忽略 */ }
+  }
+  state.landmarker = null;
+  // 若识别流与预览共用，则交给预览管理；否则释放独立流
+  if (state.recStream && state.recStream !== els.preview.srcObject) {
+    state.recStream.getTracks().forEach((track) => track.stop());
+  }
+  state.recStream = null;
+  els.recVideo.srcObject = null;
+  drawLandmarks(null);
+  document.body.classList.remove('running');
+  setGestureLocal('等待识别…', '');
+  // 若开关仍为开（如关闭悬浮窗时交还后台引擎），标记引擎归属；关闭开关则为 none
+  chrome.storage.local.set({ engineOwner: state.controlOn ? 'offscreen' : 'none' }).catch(() => {});
+}
+
+function waitForVision(timeoutMs) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const timer = setInterval(() => {
+      if (typeof FilesetResolver === 'function' && typeof HandLandmarker === 'function') {
+        clearInterval(timer);
+        resolve(true);
+      } else if (Date.now() - start > (timeoutMs || 20000)) {
+        clearInterval(timer);
+        resolve(false);
+      }
+    }, 200);
+  });
+}
+
+function scheduleRecCpuFallback() {
+  if (state.usedCpuDelegate) return;
+  clearTimeout(state.gpuFallbackTimer);
+  state.gpuFallbackTimer = setTimeout(async () => {
+    if (state.usedCpuDelegate || !state.recRunning) return;
+    if (state.recFrames < 30) return;
+    state.usedCpuDelegate = true;
+    setModelStatus('⚠️ GPU 模式未检测到手，正在切换 CPU 模式…');
+    try {
+      const fileset = await FilesetResolver.forVisionTasks(
+        chrome.runtime.getURL('vendor/mediapipe/wasm')
+      );
+      const landmarker = await HandLandmarker.createFromOptions(fileset, {
+        baseOptions: {
+          modelAssetPath: chrome.runtime.getURL('vendor/mediapipe/hand_landmarker.task'),
+          delegate: 'CPU'
+        },
+        runningMode: 'VIDEO',
+        numHands: 2,
+        minHandDetectionConfidence: 0.3,
+        minHandPresenceConfidence: 0.3,
+        minTrackingConfidence: 0.3
+      });
+      if (state.landmarker) {
+        try { state.landmarker.close(); } catch (e) { /* 忽略 */ }
+      }
+      state.landmarker = landmarker;
+      setModelStatus('✅ 识别运行中（页面引擎·CPU）');
+    } catch (err) {
+      setModelStatus('❌ CPU 模式切换失败：' + ((err && err.message) || err));
+    }
+  }, 5000);
+}
+
+function recLoop() {
+  if (!state.recRunning || !state.landmarker) {
+    state.recTimer = null;
+    return;
+  }
+  if (!state.recProcessing && els.recVideo.readyState >= 2) {
+    state.recProcessing = true;
+    try {
+      const result = state.landmarker.detectForVideo(els.recVideo, performance.now());
+      state.recFrames += 1;
+      handleRecResult(result);
+    } catch (e) {
+      state.recFrameErrors += 1;
+      if (state.recFrameErrors === 10) {
+        setModelStatus('⚠️ 识别引擎异常：' + ((e && e.message) || e));
+      }
+    }
+    state.recProcessing = false;
+  }
+  state.recTimer = setTimeout(recLoop, 33);
+}
+
+function handleRecResult(result) {
+  const hands = result && result.landmarks;
+  if (!hands || hands.length === 0) {
+    drawLandmarks(null);
+    setGestureLocal('未检测到手', '把张开的手掌放到摄像头正前方，预览里能看到整只手');
+    state.snapPinched = false;
+    state.palmHistory = [];
+    state.stablePose = '';
+    state.stableFrames = 0;
+    return;
+  }
+
+  const lm = hands[0];
+  drawLandmarks(lm);
+  const pose = GestureMath.classifyPose(lm);
+  setGestureLocal(pose.name, pose.detail);
+
+  if (pose.name === state.stablePose) {
+    state.stableFrames += 1;
+  } else {
+    state.stablePose = pose.name;
+    state.stableFrames = 1;
+  }
+  const stable = state.stableFrames >= 3;
+  const now = Date.now();
+
+  // 打响指
+  if (pose.snap) {
+    if (!state.snapPinched && stable) {
+      state.snapPinched = true;
+      if (now - state.lastActionTime >= state.debounceMs) {
+        state.lastActionTime = now;
+        sendAction('play_pause', '打响指');
+      }
+    }
+  } else {
+    state.snapPinched = false;
+  }
+
+  // 食指上/下：长按连续调音量
+  if (stable && (pose.name === '食指向上' || pose.name === '食指向下')) {
+    if (now - state.lastVolumeTime >= state.volumeRepeatMs) {
+      state.lastVolumeTime = now;
+      sendAction(pose.name === '食指向上' ? 'volume_up' : 'volume_down', pose.name);
+    }
+  } else {
+    state.lastVolumeTime = 0;
+  }
+
+  // 握拳：静音切换
+  if (stable && pose.name === '握拳' && now - state.lastActionTime >= state.debounceMs) {
+    state.lastActionTime = now;
+    sendAction('mute', '握拳');
+  }
+
+  // 手掌张开：上下挥动切集
+  if (pose.name === '手掌张开') {
+    const palmY = (lm[0].y + lm[9].y) / 2;
+    state.palmHistory.push(palmY);
+    if (state.palmHistory.length > 8) state.palmHistory.shift();
+    if (stable && state.palmHistory.length >= 8 && now - state.lastActionTime >= state.debounceMs) {
+      const dy = state.palmHistory[state.palmHistory.length - 1] - state.palmHistory[0];
+      if (dy <= -0.04) {
+        state.lastActionTime = now;
+        state.palmHistory = [];
+        sendAction('next', '手掌上挥');
+      } else if (dy >= 0.04) {
+        state.lastActionTime = now;
+        state.palmHistory = [];
+        sendAction('prev', '手掌下挥');
+      }
+    }
+  } else {
+    state.palmHistory = [];
+  }
+}
+
+// 在预览画面上叠加显示手部 21 个关键点（绿色骨架），用于直观确认检测效果
+function drawLandmarks(lm) {
+  const canvas = els.overlay;
+  if (!canvas) return;
+  const w = canvas.width = els.preview.clientWidth || 320;
+  const h = canvas.height = els.preview.clientHeight || 240;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  if (!lm) return;
+  const px = (x) => (1 - x) * w; // 预览已镜像，坐标同步翻转
+  const py = (y) => y * h;
+  const chains = [
+    [0, 1, 2, 3, 4],
+    [0, 5, 6, 7, 8],
+    [0, 9, 10, 11, 12],
+    [0, 13, 14, 15, 16],
+    [0, 17, 18, 19, 20]
+  ];
+  ctx.strokeStyle = '#00ff88';
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  for (const chain of chains) {
+    ctx.beginPath();
+    for (let i = 0; i < chain.length; i++) {
+      const p = lm[chain[i]];
+      const x = px(p.x);
+      const y = py(p.y);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  ctx.fillStyle = '#00ff88';
+  for (const p of lm) {
+    ctx.beginPath();
+    ctx.arc(px(p.x), py(p.y), 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function setGestureLocal(name, detail) {
+  els.gestureName.textContent = name;
+  els.gestureEmoji.textContent = GESTURE_EMOJI[name] || '🖐️';
+  els.gestureDetail.textContent = detail || '';
+}
+
+async function sendAction(action, gestureName) {
+  if (!state.tabId) return;
+  try {
+    const resp = await chrome.tabs.sendMessage(state.tabId, {
+      type: 'GESTURE_ACTION',
+      action: action,
+      gesture: gestureName,
+      volumeStep: state.volumeStep
+    });
+    if (resp && resp.status === 'no_video') {
+      els.videoStatus.textContent = '当前页面未检测到视频';
+      els.videoStatus.className = 'status error';
+    } else if (resp && resp.status === 'ok') {
+      await refreshPageVideoStatus();
+    } else if (resp && resp.status === 'error') {
+      els.videoStatus.textContent = '⚠️ 无法连接页面（请重新打开扩展图标后再试）';
+      els.videoStatus.className = 'status warn';
+    }
+  } catch (e) {
+    els.videoStatus.textContent = '⚠️ 无法操作页面（请重新打开扩展图标后再试）';
+    els.videoStatus.className = 'status warn';
+  }
+}
+
+async function refreshPageVideoStatus() {
+  if (!state.tabId) return;
+  try {
+    const resp = await chrome.tabs.sendMessage(state.tabId, { type: 'GET_STATUS' });
+    if (resp && resp.type === 'STATUS') {
+      if (resp.hasVideo) {
+        const vol = Math.round((resp.volume || 0) * 100);
+        els.videoStatus.textContent =
+          '✅ 已检测到视频（' + resp.host + '）｜' +
+          (resp.playing ? '▶ 播放中' : '⏸ 已暂停') +
+          '｜音量 ' + vol + '%' +
+          (resp.muted ? '｜🔇 已静音' : '');
+        els.videoStatus.className = 'status ok';
+      } else {
+        els.videoStatus.textContent = '当前页面未检测到视频';
+        els.videoStatus.className = 'status error';
+      }
+    }
+  } catch (e) {
+    // 忽略：下次动作时再刷新
+  }
+}
+
+// 关闭 / 卸载时：如果控制开启，交回后台离屏引擎继续识别；并释放本页资源
 window.addEventListener('pagehide', () => {
-  clearInterval(state.statusTimer);
+  chrome.storage.local.get('floatWindowId').then((data) => {
+    if (data.floatWindowId === state.winId) {
+      chrome.storage.local.set({ floatWindowId: null }).catch(() => {});
+    }
+  }).catch(() => {});
+  if (state.controlOn && state.tabId) {
+    sendToBackground({
+      type: 'OFFSCREEN_START',
+      tabId: state.tabId,
+      volumeStep: state.volumeStep,
+      debounceMs: state.debounceMs,
+      volumeRepeatMs: state.volumeRepeatMs
+    });
+  }
+  stopRecognition();
   stopPreview();
+  clearInterval(state.statusTimer);
 });
 
 // 启动

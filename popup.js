@@ -37,6 +37,7 @@ const state = {
   debounceMs: 900,
   volumeStep: 0.1,
   volumeRepeatMs: 650,
+  engineOwner: 'offscreen', // 'offscreen' | 'float' | 'none'
   statusTimer: null
 };
 
@@ -64,6 +65,14 @@ function init() {
     els.openFloat.addEventListener('click', onOpenFloat);
   }
   chrome.runtime.onMessage.addListener(onRuntimeMessage);
+  // 悬浮窗页面引擎的归属变化时，同步状态显示（避免后台引擎重复启动）
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes.engineOwner) return;
+    state.engineOwner = changes.engineOwner.newValue;
+    if (state.engineOwner === 'float' && state.controlOn) {
+      setModelStatus('✅ 识别由悬浮窗页面引擎运行中（后台引擎已暂停）');
+    }
+  });
 
   (async () => {
     // 1. 当前标签页（即要控制的视频页）
@@ -71,11 +80,12 @@ function init() {
     state.activeTabId = tabs[0] ? tabs[0].id : null;
 
     // 2. 读取设置
-    const settings = await chrome.storage.local.get(['controlOn', 'debounceMs', 'volumeStep', 'volumeRepeatMs']);
+    const settings = await chrome.storage.local.get(['controlOn', 'debounceMs', 'volumeStep', 'volumeRepeatMs', 'engineOwner']);
     state.controlOn = !!settings.controlOn;
     state.debounceMs = settings.debounceMs ?? 900;
     state.volumeStep = settings.volumeStep ?? 0.1;
     state.volumeRepeatMs = settings.volumeRepeatMs ?? 650;
+    state.engineOwner = settings.engineOwner || 'offscreen';
     els.toggle.checked = state.controlOn;
 
     // 3. 确保后台离屏文档存在
@@ -154,6 +164,13 @@ async function startBackground() {
   const injected = await ensureContentScript();
   if (!injected) {
     revertToggle();
+    return;
+  }
+  // 悬浮窗页面引擎在运行时，不再启动后台引擎，避免两处同时触发动作
+  const owner = (await chrome.storage.local.get('engineOwner')).engineOwner;
+  state.engineOwner = owner || 'offscreen';
+  if (state.engineOwner === 'float') {
+    setModelStatus('✅ 识别由悬浮窗页面引擎运行中（后台引擎已暂停）');
     return;
   }
   await sendToBackground({
@@ -249,7 +266,7 @@ function applyBackgroundStatus(s) {
   if (s.gesture) setGesture(s.gesture);
   if (els.gestureDetail) {
     if (s.handDetected === false && s.running) {
-      els.gestureDetail.textContent = '未检测到手：请将手掌完整放入摄像头画面';
+      els.gestureDetail.textContent = '未检测到手：把张开的手掌放到摄像头正前方，预览里能看到整只手';
     } else {
       els.gestureDetail.textContent = s.detail || '';
     }

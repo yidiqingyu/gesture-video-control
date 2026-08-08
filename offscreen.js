@@ -1,9 +1,5 @@
-// 新版 MediaPipe Tasks Vision（ES Module 引入）
+// 官方 MediaPipe Tasks Vision（ES Module，随扩展本地打包）
 import { FilesetResolver, HandLandmarker } from './vendor/mediapipe/vision_bundle.mjs';
-
-'use strict';
-
-const GestureMath = globalThis.GestureMath;
 
 // ============================================================
 // offscreen.js —— 后台手势识别引擎（在不可见的离屏文档中运行）
@@ -18,6 +14,8 @@ const GestureMath = globalThis.GestureMath;
 // ============================================================
 
 'use strict';
+
+const GestureMath = globalThis.GestureMath;
 
 // ---------- 元素与状态 ----------
 const els = {
@@ -48,6 +46,9 @@ const state = {
   frameErrors: 0,        // 连续失败的帧数（诊断用：静默失败不再吞掉）
   lastDebugTime: 0,      // 最近一次发送“引擎视角”诊断图的时间
   debugTimer: null,      // 诊断图定时器
+  frameTimer: null,      // 帧循环定时器（离屏文档不可见，rAF 不触发，必须用定时器）
+  usedCpuDelegate: false,// 是否已使用 CPU 委托（部分机器 GPU 模式检测为空）
+  gpuFallbackTimer: null,// GPU 无检测结果时自动切 CPU 的定时器
   errorText: '',
   videoStatus: { text: '正在检测当前页面…', kind: '' }
 };
@@ -120,6 +121,14 @@ function stopEngine() {
     clearInterval(state.debugTimer);
     state.debugTimer = null;
   }
+  if (state.gpuFallbackTimer) {
+    clearTimeout(state.gpuFallbackTimer);
+    state.gpuFallbackTimer = null;
+  }
+  if (state.frameTimer) {
+    clearTimeout(state.frameTimer);
+    state.frameTimer = null;
+  }
   state.currentGesture = '等待识别…';
   state.errorText = '';
   notify();
@@ -130,7 +139,7 @@ function stopEngine() {
 // ============================================================
 async function loadHandsModel() {
   if (typeof FilesetResolver !== 'function' || typeof HandLandmarker !== 'function') {
-    state.errorText = 'MediaPipe 加载失败：vendor/mediapipe/vision_bundle.mjs 缺失';
+    state.errorText = 'MediaPipe 加载失败：vendor/mediapipe/vision_bundle.js 缺失';
     notify();
     return;
   }
@@ -146,12 +155,13 @@ async function loadHandsModel() {
       baseOptions: baseOptions,
       runningMode: 'VIDEO',
       numHands: 2,
-      minHandDetectionConfidence: 0.4,
-      minHandPresenceConfidence: 0.4,
-      minTrackingConfidence: 0.4
+      minHandDetectionConfidence: 0.3,
+      minHandPresenceConfidence: 0.3,
+      minTrackingConfidence: 0.3
     };
     // GPU 优先；部分显卡/驱动上 GPU 委托失败时自动回退 CPU
     let landmarker;
+    let usedCpu = false;
     try {
       landmarker = await HandLandmarker.createFromOptions(fileset, {
         ...commonOptions,
@@ -162,14 +172,18 @@ async function loadHandsModel() {
         ...commonOptions,
         baseOptions: { ...baseOptions, delegate: 'CPU' }
       });
+      usedCpu = true;
     }
     state.hands = landmarker;
+    state.usedCpuDelegate = usedCpu;
     state.modelReady = true;
     // 检测不到手时，周期性把引擎实际看到的画面发给弹窗/悬浮窗（诊断用）
     if (state.debugTimer) clearInterval(state.debugTimer);
     state.debugTimer = setInterval(maybeSendDebugSnapshot, 2500);
+    // GPU 模式跑一会儿仍检测不到手 → 自动切换 CPU（更兼容）
+    scheduleGpuFallback();
     notify();
-    requestAnimationFrame(processFrame);
+    scheduleNextFrame();
   } catch (err) {
     state.errorText = '模型加载失败：' + ((err && err.message) || err);
     notify();
@@ -177,7 +191,10 @@ async function loadHandsModel() {
 }
 
 async function processFrame() {
-  if (!state.running) return;
+  if (!state.running) {
+    state.frameTimer = null;
+    return;
+  }
   if (!state.processing && state.hands && els.camera.readyState >= 2) {
     state.processing = true;
     try {
@@ -200,7 +217,16 @@ async function processFrame() {
     }
     state.processing = false;
   }
-  requestAnimationFrame(processFrame);
+  scheduleNextFrame();
+}
+
+// 离屏文档是不可见页面：requestAnimationFrame 不触发（本机实测 15 秒仅 1 次），
+// 必须用定时器驱动逐帧识别；约 30fps 足够手势检测。
+const FRAME_INTERVAL_MS = 33;
+
+function scheduleNextFrame() {
+  if (state.frameTimer) clearTimeout(state.frameTimer);
+  state.frameTimer = setTimeout(processFrame, FRAME_INTERVAL_MS);
 }
 
 // 引擎视角诊断图：当检测不到手时，把后台摄像头当前帧发给界面
@@ -220,6 +246,41 @@ function maybeSendDebugSnapshot() {
   } catch (e) {
     // 单帧诊断失败忽略
   }
+}
+
+// GPU 模式几秒内检测不到手时，自动重建为 CPU 委托（部分机器 GPU/WebGL 渲染异常）
+function scheduleGpuFallback() {
+  if (state.usedCpuDelegate) return;
+  clearTimeout(state.gpuFallbackTimer);
+  state.gpuFallbackTimer = setTimeout(async () => {
+    if (state.usedCpuDelegate || state.handDetected || !state.running) return;
+    if (state.frames < 30) return; // 帧数太少说明仍在启动，继续等待
+    state.usedCpuDelegate = true;
+    state.errorText = 'GPU 模式下未检测到手，已自动切换 CPU 模式（更兼容，切换需几秒）';
+    notify();
+    try {
+      const fileset = await FilesetResolver.forVisionTasks(
+        chrome.runtime.getURL('vendor/mediapipe/wasm')
+      );
+      const landmarker = await HandLandmarker.createFromOptions(fileset, {
+        baseOptions: {
+          modelAssetPath: chrome.runtime.getURL('vendor/mediapipe/hand_landmarker.task'),
+          delegate: 'CPU'
+        },
+        runningMode: 'VIDEO',
+        numHands: 2,
+        minHandDetectionConfidence: 0.3,
+        minHandPresenceConfidence: 0.3,
+        minTrackingConfidence: 0.3
+      });
+      state.hands = landmarker;
+      state.errorText = '';
+      notify();
+    } catch (err) {
+      state.errorText = 'CPU 模式切换失败：' + ((err && err.message) || err);
+      notify();
+    }
+  }, 5000);
 }
 
 // ============================================================
@@ -247,6 +308,10 @@ function onHandsResults(results) {
   const pose = GestureMath.classifyPose(lm);
   if (!state.handDetected) {
     state.handDetected = true;
+    if (state.gpuFallbackTimer) {
+      clearTimeout(state.gpuFallbackTimer);
+      state.gpuFallbackTimer = null;
+    }
     notify();
   }
   setGesture(pose.name, pose.detail);
