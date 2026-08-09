@@ -734,11 +734,7 @@ function handleRecResult(result) {
     }
   }
 
-  // 握拳：静音切换
-  if (stable && pose.name === '握拳' && now - state.lastActionTime >= state.debounceMs) {
-    state.lastActionTime = now;
-    sendAction('mute', '握拳');
-  }
+  // 握拳：不再触发任何动作（保留识别，避免握拳被误判成其它手势）
 
   // 手掌张开：上下挥动切集
   if (pose.name === '手掌张开') {
