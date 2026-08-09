@@ -80,10 +80,12 @@ const GestureMath = (() => {
     //  - 食指不能明显伸直（避免和“单个食指”混淆），阈值放宽以便稍远距离也能识别；
     //  - 中指、无名指不能明显弯曲（标准 OK 姿势这两根是伸直的；
     //    做“单个小拇指”时它们会收着，靠这条把两者区分开，防止误判成 OK）。
+    //  - 拇指尖与食指尖必须是“捏合”级别的近（< 0.35），
+    //    否则手收着时拇指自然搭在食指附近也会被误判成 OK。
     const okPose = !allCurled &&
       idx < EXT_STRONG &&
       mid > CURLED && ring > CURLED &&
-      dist(lm[4], lm[8]) < sz * 0.42;
+      dist(lm[4], lm[8]) < sz * 0.35;
 
     // 原来的“打响指”（拇指尖 + 中指尖捏合）已停用：
     // 识别出来但不触发任何动作，防止残留手型误判成别的指令
@@ -97,17 +99,29 @@ const GestureMath = (() => {
     const indexUp = indexSolo && lm[8].y < lm[6].y - 0.015;
     const indexDown = indexSolo && lm[8].y > lm[6].y + 0.015;
 
-    // 单个小拇指：小指伸直，其余三指都收着（小指较短，比例放宽一点）
+    // 单个小拇指：小指伸直，其余三指都收着。
+    // 判定放宽：允许食指/中指/无名指只是“半弯”（不要求完全弯曲），
+    // 只要它们都没伸直、且明显不如小指伸得开，就算小拇指。
     const pinkySolo = pinky > EXT_WEAK &&
-      idx < EXT_WEAK && mid < EXT_WEAK && ring < EXT_WEAK &&
-      idx < pinky * 0.85 && mid < pinky * 0.85 && ring < pinky * 0.85;
-    const pinkyUp = pinkySolo && lm[20].y < lm[18].y - 0.012;
-    const pinkyDown = pinkySolo && lm[20].y > lm[18].y + 0.012;
+      idx < EXT_WEAK && mid < EXT_WEAK && ring < EXT_WEAK;
+    // 补充特征：小指明显伸直，且其它三指都没“明显伸直”
+    //（容忍食指/中指/无名指接近半直，但标准 OK 的中/无名指是伸直的，
+    //  靠这条避免把 OK 误判成小拇指）
+    const pinkyDominant = pinky > EXT_STRONG &&
+      idx < EXT_STRONG && mid < EXT_STRONG && ring < EXT_STRONG &&
+      idx < pinky * 0.9 && mid < pinky * 0.9 && ring < pinky * 0.9;
+    const isPinkyPose = pinkySolo || pinkyDominant;
+    // 方向判断以“指根”为基准，手斜一点/侧一点也能识别
+    const pinkyUp = isPinkyPose && lm[20].y < lm[17].y - 0.008;
+    const pinkyDown = isPinkyPose && lm[20].y > lm[17].y + 0.008;
 
-    // “单个小拇指”特征最明显（小指伸直 + 其余三指收着），放最前面优先判定，
-    // 避免拇指自然靠近其他手指时被 OK / 原打响指残留逻辑误判
-    if (pinkyUp) return { name: '小拇指向上', ok: false, detail: '单个小拇指伸直朝上' };
-    if (pinkyDown) return { name: '小拇指向下', ok: false, detail: '单个小拇指伸直朝下' };
+    // “单个小拇指”特征最明显，放最前面优先判定；
+    // 就算方向不明确，也绝不落到 OK，避免小拇指误触播放/暂停
+    if (isPinkyPose) {
+      if (pinkyUp) return { name: '小拇指向上', ok: false, detail: '单个小拇指伸直朝上' };
+      if (pinkyDown) return { name: '小拇指向下', ok: false, detail: '单个小拇指伸直朝下' };
+      return { name: '其他手势', ok: false, detail: '小指伸直但方向不明' };
+    }
     if (okPose) return { name: 'OK', ok: true, detail: '拇指+食指捏合成圈' };
     if (thumbMiddlePinch) return { name: '其他手势', ok: false, detail: '拇指+中指捏合（原打响指，已停用）' };
     if (indexUp) return { name: '食指向上', ok: false, detail: '单个食指伸直朝上' };
