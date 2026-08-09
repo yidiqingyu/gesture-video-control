@@ -89,10 +89,11 @@ const GestureMath = (() => {
     // 识别出来但不触发任何动作，防止残留手型误判成别的指令
     const thumbMiddlePinch = !allCurled && dist(lm[4], lm[12]) < sz * 0.38;
 
-    // 单个食指：食指明显伸直，其余三指都收着
+    // 单个食指：食指明显伸直，其余三指明显低于食指（允许半弯，
+    // 竖屏/随意姿势下其它手指往往不会完全收拢，太严格会识别不到）
     const indexSolo = idx > EXT_STRONG &&
-      mid < EXT_WEAK && ring < EXT_WEAK && pinky < EXT_WEAK &&
-      mid < idx * 0.8 && ring < idx * 0.8 && pinky < idx * 0.8;
+      mid < EXT_STRONG && ring < EXT_STRONG && pinky < EXT_STRONG &&
+      mid < idx * 0.78 && ring < idx * 0.78 && pinky < idx * 0.78;
     const indexUp = indexSolo && lm[8].y < lm[6].y - 0.015;
     const indexDown = indexSolo && lm[8].y > lm[6].y + 0.015;
 
