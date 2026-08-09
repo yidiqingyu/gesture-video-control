@@ -100,6 +100,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'ERROR_REPORT') {
     console.warn('[手势视频控制] 内容脚本上报错误：', message.error);
   }
+
+  // 离屏文档无法直接访问 chrome.storage，由后台代为写入短视频模式状态
+  if (message.type === 'SHORT_VIDEO_MODE_SET') {
+    chrome.storage.local.set({ shortVideoMode: !!message.value });
+    sendResponse({ ok: true });
+  }
 });
 
 // 悬浮窗被关闭时，清理记录的窗口 id（下次可重新创建）

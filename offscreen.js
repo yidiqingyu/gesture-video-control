@@ -72,9 +72,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'OFFSCREEN_START':
       if (message.tabId) state.targetTabId = message.tabId;
       state.controlOn = true;
-      chrome.storage.local.get('shortVideoMode', (d) => {
-        state.shortVideoMode = !!d.shortVideoMode;
-      });
+      // 离屏文档不能直接访问 chrome.storage，模式由弹窗/悬浮窗随消息传入
+      if (typeof message.shortVideoMode === 'boolean') {
+        state.shortVideoMode = message.shortVideoMode;
+      }
       if (typeof message.volumeStep === 'number') state.volumeStep = message.volumeStep;
       if (typeof message.debounceMs === 'number') state.debounceMs = message.debounceMs;
       if (typeof message.volumeRepeatMs === 'number') state.volumeRepeatMs = message.volumeRepeatMs;
@@ -89,13 +90,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'OFFSCREEN_GET_STATUS':
       sendResponse(buildStatus());
       break;
-  }
-});
-
-// 弹窗/悬浮窗切换模式时，后台引擎同步
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.shortVideoMode) {
-    state.shortVideoMode = !!changes.shortVideoMode.newValue;
   }
 });
 
@@ -430,10 +424,10 @@ function onHandsResults(results) {
 
 // 手掌张开保持 2 秒：切换长视频模式 <-> 短视频模式
 async function toggleShortVideoMode() {
-  const data = await chrome.storage.local.get('shortVideoMode');
-  const next = !data.shortVideoMode;
+  const next = !state.shortVideoMode;
   state.shortVideoMode = next;
-  await chrome.storage.local.set({ shortVideoMode: next });
+  // 离屏文档无法直接写 storage，交给后台 Service Worker 落盘并通知其他界面
+  chrome.runtime.sendMessage({ type: 'SHORT_VIDEO_MODE_SET', value: next }).catch(() => {});
   setGesture('手掌张开', next ? '已切换到短视频模式（食指上=下滑，食指下=上滑）' : '已切回长视频模式');
   notify();
 }

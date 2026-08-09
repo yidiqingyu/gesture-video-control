@@ -885,6 +885,7 @@ window.addEventListener('pagehide', () => {
     sendToBackground({
       type: 'OFFSCREEN_START',
       tabId: state.tabId,
+      shortVideoMode: state.shortVideoMode,
       volumeStep: state.volumeStep,
       debounceMs: state.debounceMs,
       volumeRepeatMs: state.volumeRepeatMs

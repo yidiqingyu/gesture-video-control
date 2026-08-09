@@ -74,10 +74,12 @@ function init() {
   chrome.runtime.onMessage.addListener(onRuntimeMessage);
   // 悬浮窗页面引擎的归属变化时，同步状态显示（避免后台引擎重复启动）
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !changes.engineOwner) return;
-    state.engineOwner = changes.engineOwner.newValue;
-    if (state.engineOwner === 'float' && state.controlOn) {
-      setModelStatus('✅ 识别由悬浮窗页面引擎运行中（后台引擎已暂停）');
+    if (area !== 'local') return;
+    if (changes.engineOwner) {
+      state.engineOwner = changes.engineOwner.newValue;
+      if (state.engineOwner === 'float' && state.controlOn) {
+        setModelStatus('✅ 识别由悬浮窗页面引擎运行中（后台引擎已暂停）');
+      }
     }
     if (changes.shortVideoMode) {
       state.shortVideoMode = !!changes.shortVideoMode.newValue;
@@ -189,6 +191,7 @@ async function startBackground() {
   await sendToBackground({
     type: 'OFFSCREEN_START',
     tabId: state.activeTabId,
+    shortVideoMode: state.shortVideoMode,
     volumeStep: state.volumeStep,
     debounceMs: state.debounceMs,
     volumeRepeatMs: state.volumeRepeatMs
