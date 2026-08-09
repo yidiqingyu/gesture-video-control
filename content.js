@@ -40,10 +40,41 @@
   ];
 
   // ---------- 视频查找 ----------
+  // 深度收集所有 <video>：穿透 Shadow DOM（抖音播放器 xgplayer 等可能用）
+  function collectVideos(root) {
+    const found = [];
+    const walk = (node) => {
+      if (!node) return;
+      if (node instanceof HTMLVideoElement) {
+        found.push(node);
+      }
+      if (node.children) {
+        for (const child of Array.from(node.children)) walk(child);
+      }
+      // open 的 Shadow DOM 可通过 shadowRoot 访问；closed 的取不到就跳过
+      if (node.shadowRoot) {
+        walk(node.shadowRoot);
+      }
+    };
+    walk(root || document);
+    return found;
+  }
+
   // 找出页面上“最主要”的 <video>：
-  //   优先选择可见面积最大、且已加载时长信息的播放器。
+  //   1) 优先视口中心的 video（抖音推荐流当前视频居中，命中率最高）
+  //   2) 其次在全部 video（含 Shadow DOM）里选“正在播放 + 面积大”的那个
   function findMainVideo() {
-    const videos = Array.from(document.querySelectorAll('video'));
+    // 1) 视口中心命中测试：点击屏幕中心，向上找 video
+    const centerX = window.innerWidth / 2;
+    const centerY = window.innerHeight / 2;
+    const hit = document.elementFromPoint(centerX, centerY);
+    if (hit && typeof hit.closest === 'function') {
+      const v = hit.closest('video');
+      if (v && v.getBoundingClientRect().width > 40) return v;
+    }
+
+    // 2) 深度收集所有 video（含 Shadow DOM）
+    const videos = collectVideos(document);
     if (videos.length === 0) return null;
 
     let best = null;
@@ -51,11 +82,13 @@
     for (const video of videos) {
       const rect = video.getBoundingClientRect();
       // 跳过过小或隐藏的播放器（避免选中站内小图标 / 广告视频）
-      if (rect.width < 80 || rect.height < 60) continue;
+      if (rect.width < 40 || rect.height < 30) continue;
       const area = rect.width * rect.height;
       const hasDuration = Number.isFinite(video.duration) && video.duration > 0;
-      // 加权：已加载时长信息的视频权重更高，其次参考 readyState
-      const score = area * (hasDuration ? 10 : 1) + video.readyState * 100;
+      // 加权：正在播放的优先，其次已加载时长，再其次面积
+      const score = area * (hasDuration ? 10 : 1)
+        + video.readyState * 100
+        + (!video.paused && !video.ended ? 500 : 0);
       if (score > bestScore) {
         bestScore = score;
         best = video;
