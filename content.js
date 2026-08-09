@@ -220,6 +220,15 @@
         if (r.status === 'ok') r.toast = '⏮ 上一集';
         return r;
       }
+      // 短视频模式：像手指刷视频一样滚动页面（一屏）
+      case 'scroll_down': {
+        window.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
+        return { status: 'ok', toast: '⬇ 向下滑动' };
+      }
+      case 'scroll_up': {
+        window.scrollBy({ top: -window.innerHeight, behavior: 'smooth' });
+        return { status: 'ok', toast: '⬆ 向上滑动' };
+      }
       default:
         return { status: 'error', message: '未知动作: ' + action };
     }

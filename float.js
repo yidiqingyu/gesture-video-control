@@ -36,6 +36,7 @@ const els = {
   engineViewWrap: document.getElementById('engine-view-wrap'),
   engineView: document.getElementById('engine-view'),
   toggle: document.getElementById('control-toggle'),
+  shortToggle: document.getElementById('short-toggle'),
   grantButton: document.getElementById('grant-button')
 };
 
@@ -67,7 +68,10 @@ const state = {
   okPinched: false,      // OK 手势捏合跳变检测
   palmHistory: [],
   handFoundFrames: 0,    // 连续检测到手的帧数（显示防抖用）
-  handLostFrames: 0      // 连续没检测到手的帧数（显示防抖用）
+  handLostFrames: 0,     // 连续没检测到手的帧数（显示防抖用）
+  shortVideoMode: false, // 短视频模式（默认长视频模式）
+  palmHoldStart: null,   // 手掌张开保持计时的起点
+  palmHoldTriggered: false // 本次保持是否已触发过模式切换
 };
 
 // 显示防抖：身体晃动造成的“疑似手”会一闪而过。
@@ -105,6 +109,7 @@ function init() {
   els.btnClose.addEventListener('click', onClose);
   els.pill.addEventListener('click', restore);
   els.toggle.addEventListener('change', onToggleChange);
+  if (els.shortToggle) els.shortToggle.addEventListener('change', onShortToggleChange);
   if (els.grantButton) els.grantButton.addEventListener('click', onGrantClick);
   chrome.runtime.onMessage.addListener(onRuntimeMessage);
 
@@ -133,13 +138,15 @@ function init() {
     }
     chrome.storage.local.set({ floatWindowId: win.id }).catch(() => {});
 
-    const settings = await chrome.storage.local.get(['controlOn', 'previewShown', 'debounceMs', 'volumeStep', 'volumeRepeatMs']);
+    const settings = await chrome.storage.local.get(['controlOn', 'previewShown', 'debounceMs', 'volumeStep', 'volumeRepeatMs', 'shortVideoMode']);
     state.controlOn = !!settings.controlOn;
     state.previewShown = settings.previewShown !== false;
     state.debounceMs = settings.debounceMs ?? 900;
     state.volumeStep = settings.volumeStep ?? 0.1;
     state.volumeRepeatMs = settings.volumeRepeatMs ?? 650;
+    state.shortVideoMode = !!settings.shortVideoMode;
     els.toggle.checked = state.controlOn;
+    if (els.shortToggle) els.shortToggle.checked = state.shortVideoMode;
 
     applyPreviewVisibility();
     refreshStatus();
@@ -156,18 +163,31 @@ function init() {
 
   // 弹窗等其他界面修改开关时，同步本窗口的识别引擎
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !changes.controlOn) return;
-    const on = !!changes.controlOn.newValue;
-    if (on === state.controlOn) return;
-    state.controlOn = on;
-    els.toggle.checked = on;
-    if (on) {
-      startRecognition();
-    } else {
-      stopRecognition();
-      setModelStatus('手势控制已关闭');
+    if (area !== 'local') return;
+    if (changes.controlOn) {
+      const on = !!changes.controlOn.newValue;
+      if (on === state.controlOn) return;
+      state.controlOn = on;
+      els.toggle.checked = on;
+      if (on) {
+        startRecognition();
+      } else {
+        stopRecognition();
+        setModelStatus('手势控制已关闭');
+      }
+    }
+    if (changes.shortVideoMode) {
+      state.shortVideoMode = !!changes.shortVideoMode.newValue;
+      if (els.shortToggle) els.shortToggle.checked = state.shortVideoMode;
     }
   });
+}
+
+// 短视频模式开关
+async function onShortToggleChange() {
+  state.shortVideoMode = !!els.shortToggle.checked;
+  await chrome.storage.local.set({ shortVideoMode: state.shortVideoMode });
+  setModelStatus(state.shortVideoMode ? '已切换到短视频模式（食指上=下滑，食指下=上滑）' : '已切回长视频模式');
 }
 
 // ============================================================
@@ -653,6 +673,8 @@ function handleRecResult(result) {
     setGestureLocal('未检测到手', '把张开的手掌放到摄像头正前方，预览里能看到整只手');
     state.okPinched = false;
     state.palmHistory = [];
+    state.palmHoldStart = null;
+    state.palmHoldTriggered = false;
     state.stablePose = '';
     state.stableFrames = 0;
     return;
@@ -700,11 +722,16 @@ function handleRecResult(result) {
     state.lastVolumeTime = 0;
   }
 
-  // 单个食指上/下：切换上一个/下一个视频（一次性）
+  // 单个食指上/下（一次性）：
+  //   长视频模式 = 上一个/下一个视频；短视频模式 = 向下/向上滑动
   if (stable && (pose.name === '食指向上' || pose.name === '食指向下') &&
       now - state.lastActionTime >= state.debounceMs) {
     state.lastActionTime = now;
-    sendAction(pose.name === '食指向上' ? 'prev' : 'next', pose.name);
+    if (state.shortVideoMode) {
+      sendAction(pose.name === '食指向上' ? 'scroll_down' : 'scroll_up', pose.name);
+    } else {
+      sendAction(pose.name === '食指向上' ? 'prev' : 'next', pose.name);
+    }
   }
 
   // 握拳：静音切换
@@ -730,9 +757,28 @@ function handleRecResult(result) {
         sendAction('prev', '手掌下挥');
       }
     }
+    // 保持 2 秒：切换长/短视频模式（切换一次后需松手重新比才算下一次）
+    if (state.palmHoldStart === null) {
+      state.palmHoldStart = now;
+    } else if (!state.palmHoldTriggered && now - state.palmHoldStart >= 2000) {
+      state.palmHoldTriggered = true;
+      toggleShortVideoMode();
+    }
   } else {
     state.palmHistory = [];
+    state.palmHoldStart = null;
+    state.palmHoldTriggered = false;
   }
+}
+
+// 手掌张开保持 2 秒：切换长视频模式 <-> 短视频模式
+async function toggleShortVideoMode() {
+  const data = await chrome.storage.local.get('shortVideoMode');
+  const next = !data.shortVideoMode;
+  state.shortVideoMode = next;
+  await chrome.storage.local.set({ shortVideoMode: next });
+  if (els.shortToggle) els.shortToggle.checked = next;
+  setGestureLocal('手掌张开', next ? '已切换到短视频模式（食指上=下滑，食指下=上滑）' : '已切回长视频模式');
 }
 
 // 在预览画面上叠加显示手部 21 个关键点（绿色骨架），用于直观确认检测效果

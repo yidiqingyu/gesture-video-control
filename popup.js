@@ -27,7 +27,8 @@ const els = {
   videoStatus: document.getElementById('video-status'),
   engineViewWrap: document.getElementById('engine-view-wrap'),
   engineView: document.getElementById('engine-view'),
-  toggle: document.getElementById('control-toggle')
+  toggle: document.getElementById('control-toggle'),
+  shortToggle: document.getElementById('short-toggle')
 };
 
 // ---------- 状态 ----------
@@ -38,6 +39,7 @@ const state = {
   volumeStep: 0.1,
   volumeRepeatMs: 650,
   engineOwner: 'offscreen', // 'offscreen' | 'float' | 'none'
+  shortVideoMode: false,
   statusTimer: null
 };
 
@@ -60,6 +62,9 @@ const GESTURE_EMOJI = {
 // ============================================================
 function init() {
   els.toggle.addEventListener('change', onToggleChange);
+  if (els.shortToggle) {
+    els.shortToggle.addEventListener('change', onShortToggleChange);
+  }
   if (els.grantButton) {
     els.grantButton.addEventListener('click', onGrantClick);
   }
@@ -74,6 +79,10 @@ function init() {
     if (state.engineOwner === 'float' && state.controlOn) {
       setModelStatus('✅ 识别由悬浮窗页面引擎运行中（后台引擎已暂停）');
     }
+    if (changes.shortVideoMode) {
+      state.shortVideoMode = !!changes.shortVideoMode.newValue;
+      if (els.shortToggle) els.shortToggle.checked = state.shortVideoMode;
+    }
   });
 
   (async () => {
@@ -82,13 +91,15 @@ function init() {
     state.activeTabId = tabs[0] ? tabs[0].id : null;
 
     // 2. 读取设置
-    const settings = await chrome.storage.local.get(['controlOn', 'debounceMs', 'volumeStep', 'volumeRepeatMs', 'engineOwner']);
+    const settings = await chrome.storage.local.get(['controlOn', 'debounceMs', 'volumeStep', 'volumeRepeatMs', 'engineOwner', 'shortVideoMode']);
     state.controlOn = !!settings.controlOn;
     state.debounceMs = settings.debounceMs ?? 900;
     state.volumeStep = settings.volumeStep ?? 0.1;
     state.volumeRepeatMs = settings.volumeRepeatMs ?? 650;
     state.engineOwner = settings.engineOwner || 'offscreen';
+    state.shortVideoMode = !!settings.shortVideoMode;
     els.toggle.checked = state.controlOn;
+    if (els.shortToggle) els.shortToggle.checked = state.shortVideoMode;
 
     // 3. 确保后台离屏文档存在
     await ensureOffscreen();
@@ -216,6 +227,13 @@ async function onToggleChange() {
     await stopBackground();
     stopPreview();
   }
+}
+
+// 短视频模式开关（引擎侧通过 storage 监听同步）
+async function onShortToggleChange() {
+  state.shortVideoMode = !!els.shortToggle.checked;
+  await chrome.storage.local.set({ shortVideoMode: state.shortVideoMode });
+  setModelStatus(state.shortVideoMode ? '已切换到短视频模式（食指上=下滑，食指下=上滑）' : '已切回长视频模式');
 }
 
 function revertToggle() {

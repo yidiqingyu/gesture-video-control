@@ -38,6 +38,9 @@ const state = {
   palmHistory: [],       // 手掌上下挥动检测
   handFoundFrames: 0,    // 连续检测到手的帧数（显示防抖用）
   handLostFrames: 0,     // 连续没检测到手的帧数（显示防抖用）
+  shortVideoMode: false, // 短视频模式（默认长视频模式）
+  palmHoldStart: null,   // 手掌张开保持计时的起点
+  palmHoldTriggered: false, // 本次保持是否已触发过模式切换
   debounceMs: 900,
   volumeStep: 0.1,
   volumeRepeatMs: 650,
@@ -69,6 +72,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'OFFSCREEN_START':
       if (message.tabId) state.targetTabId = message.tabId;
       state.controlOn = true;
+      chrome.storage.local.get('shortVideoMode', (d) => {
+        state.shortVideoMode = !!d.shortVideoMode;
+      });
       if (typeof message.volumeStep === 'number') state.volumeStep = message.volumeStep;
       if (typeof message.debounceMs === 'number') state.debounceMs = message.debounceMs;
       if (typeof message.volumeRepeatMs === 'number') state.volumeRepeatMs = message.volumeRepeatMs;
@@ -83,6 +89,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'OFFSCREEN_GET_STATUS':
       sendResponse(buildStatus());
       break;
+  }
+});
+
+// 弹窗/悬浮窗切换模式时，后台引擎同步
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.shortVideoMode) {
+    state.shortVideoMode = !!changes.shortVideoMode.newValue;
   }
 });
 
@@ -310,6 +323,8 @@ function onHandsResults(results) {
     setGesture('未检测到手', '请将手掌完整放入摄像头画面');
     state.okPinched = false;
     state.palmHistory = [];
+    state.palmHoldStart = null;
+    state.palmHoldTriggered = false;
     state.stablePose = '';
     state.stableFrames = 0;
     return;
@@ -364,11 +379,16 @@ function onHandsResults(results) {
     state.lastVolumeTime = 0;
   }
 
-  // 单个食指上/下：切换上一个/下一个视频（一次性）
+  // 单个食指上/下（一次性）：
+  //   长视频模式 = 上一个/下一个视频；短视频模式 = 向下/向上滑动
   if (stable && (pose.name === '食指向上' || pose.name === '食指向下') &&
       now - state.lastActionTime >= state.debounceMs) {
     state.lastActionTime = now;
-    triggerAction(pose.name === '食指向上' ? 'prev' : 'next', pose.name);
+    if (state.shortVideoMode) {
+      triggerAction(pose.name === '食指向上' ? 'scroll_down' : 'scroll_up', pose.name);
+    } else {
+      triggerAction(pose.name === '食指向上' ? 'prev' : 'next', pose.name);
+    }
   }
 
   // 握拳：静音切换
@@ -394,9 +414,28 @@ function onHandsResults(results) {
         triggerAction('prev', '手掌下挥');
       }
     }
+    // 保持 2 秒：切换长/短视频模式（切换一次后需松手重新比才算下一次）
+    if (state.palmHoldStart === null) {
+      state.palmHoldStart = now;
+    } else if (!state.palmHoldTriggered && now - state.palmHoldStart >= 2000) {
+      state.palmHoldTriggered = true;
+      toggleShortVideoMode();
+    }
   } else {
     state.palmHistory = [];
+    state.palmHoldStart = null;
+    state.palmHoldTriggered = false;
   }
+}
+
+// 手掌张开保持 2 秒：切换长视频模式 <-> 短视频模式
+async function toggleShortVideoMode() {
+  const data = await chrome.storage.local.get('shortVideoMode');
+  const next = !data.shortVideoMode;
+  state.shortVideoMode = next;
+  await chrome.storage.local.set({ shortVideoMode: next });
+  setGesture('手掌张开', next ? '已切换到短视频模式（食指上=下滑，食指下=上滑）' : '已切回长视频模式');
+  notify();
 }
 
 function setGesture(name, detail) {
