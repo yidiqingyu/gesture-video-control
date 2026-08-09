@@ -723,12 +723,12 @@ function handleRecResult(result) {
   }
 
   // 单个食指上/下（一次性）：
-  //   长视频模式 = 上一个/下一个视频；短视频模式 = 向下/向上滑动
+  //   长视频模式 = 上一个/下一个视频；短视频模式 = 按 ↑/↓ 方向键切换视频
   if (stable && (pose.name === '食指向上' || pose.name === '食指向下') &&
       now - state.lastActionTime >= state.debounceMs) {
     state.lastActionTime = now;
     if (state.shortVideoMode) {
-      sendAction(pose.name === '食指向上' ? 'scroll_down' : 'scroll_up', pose.name);
+      sendAction(pose.name === '食指向上' ? 'scroll_up' : 'scroll_down', pose.name);
     } else {
       sendAction(pose.name === '食指向上' ? 'prev' : 'next', pose.name);
     }
@@ -778,7 +778,7 @@ async function toggleShortVideoMode() {
   state.shortVideoMode = next;
   await chrome.storage.local.set({ shortVideoMode: next });
   if (els.shortToggle) els.shortToggle.checked = next;
-  setGestureLocal('手掌张开', next ? '已切换到短视频模式（食指上=下滑，食指下=上滑）' : '已切回长视频模式');
+  setGestureLocal('手掌张开', next ? '已切换到短视频模式（食指上=↑，食指下=↓）' : '已切回长视频模式');
 }
 
 // 在预览画面上叠加显示手部 21 个关键点（绿色骨架），用于直观确认检测效果

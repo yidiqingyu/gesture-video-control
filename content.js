@@ -180,23 +180,98 @@
 
   function sendDirectionKey(direction) {
     const key = direction === 'down' ? 'ArrowDown' : 'ArrowUp';
-    const code = key;
     const keyCode = direction === 'down' ? 40 : 38;
-    const evt = new KeyboardEvent('keydown', {
-      key, code, bubbles: true, cancelable: true
-    });
-    // 兼容只读 keyCode 的老式监听器
-    Object.defineProperty(evt, 'keyCode', { get: () => keyCode });
-    Object.defineProperty(evt, 'which', { get: () => keyCode });
-    document.dispatchEvent(evt);
+    // keydown/keyup 都派发，兼容不同监听方式；
+    // 只派发到 document（事件会冒泡到 window），避免重复触发
+    for (const type of ['keydown', 'keyup']) {
+      const evt = new KeyboardEvent(type, {
+        key, code: key, bubbles: true, cancelable: true
+      });
+      // 兼容只读 keyCode 的老式监听器
+      Object.defineProperty(evt, 'keyCode', { get: () => keyCode });
+      Object.defineProperty(evt, 'which', { get: () => keyCode });
+      document.dispatchEvent(evt);
+    }
   }
 
   function scrollPage(direction) {
     const el = findScrollContainer();
     const distance = (direction === 'down' ? 1 : -1) * Math.max(el.clientHeight || 480, 480);
     el.scrollBy({ top: distance, behavior: 'smooth' });
-    sendDirectionKey(direction);
     return { status: 'ok' };
+  }
+
+  // 记录当前“正在播的视频”，用于判断一次切换是否真的生效
+  function captureVideoState() {
+    const v = findMainVideo();
+    return {
+      el: v,
+      src: v ? v.currentSrc || v.src || '' : '',
+      // 抖音网页版用 data-e2e="feed-active-video" 标记当前活动视频
+      active: document.querySelector('[data-e2e="feed-active-video"]')
+    };
+  }
+
+  function videoStateChanged(prev) {
+    const now = captureVideoState();
+    if (now.active && prev.active && now.active !== prev.active) return true;
+    if (now.src && prev.src && now.src !== prev.src) return true;
+    return false;
+  }
+
+  // 刷视频多路尝试：官方按钮 → 方向键 → 滚轮 → 滚动容器。
+  // 每触发一路后等 120ms 检查页面是否真的切了视频，没切才继续下一路：
+  // 既兼容不同站点，又避免一次手势同时触发多路导致切两个视频。
+  function swipeVideo(direction) {
+    const down = direction === 'down';
+    const prevState = captureVideoState();
+
+    // 1) 站点自带的“下一个 / 上一个”按钮
+    //    抖音网页版：推荐流右侧箭头 [data-e2e="video-switch-next-arrow"] 等
+    const nextSels = [
+      '[data-e2e="video-switch-next-arrow"]',
+      '[aria-label*="下一个" i]', '[aria-label*="下一条" i]', '[aria-label*="Next" i]',
+      'button[class*="next" i]', 'a[class*="next" i]',
+      '[class*="next-arrow" i]', '[class*="swiper-next" i]', '[class*="arrow-right" i]'
+    ];
+    const prevSels = [
+      '[data-e2e="video-switch-prev-arrow"]',
+      '[aria-label*="上一个" i]', '[aria-label*="上一条" i]', '[aria-label*="Prev" i]',
+      'button[class*="prev" i]', 'a[class*="prev" i]',
+      '[class*="prev-arrow" i]', '[class*="swiper-prev" i]', '[class*="arrow-left" i]'
+    ];
+    for (const sel of (down ? nextSels : prevSels)) {
+      const el = document.querySelector(sel);
+      // 不检查可见性：JS 的 click() 对隐藏按钮同样有效
+      if (el && typeof el.click === 'function') {
+        el.click();
+        return;
+      }
+    }
+
+    // 2) 方向键：抖音网页版全局监听 ↑↓ 切换视频
+    sendDirectionKey(down ? 'down' : 'up');
+
+    setTimeout(() => {
+      if (videoStateChanged(prevState)) return;
+
+      // 3) 滚轮事件（部分站点监听 wheel 切换视频）
+      const mainVideo = findMainVideo();
+      const wheelTarget = mainVideo || document;
+      wheelTarget.dispatchEvent(new WheelEvent('wheel', {
+        deltaY: down ? 240 : -240,
+        deltaMode: 0,
+        bubbles: true,
+        cancelable: true
+      }));
+
+      setTimeout(() => {
+        if (videoStateChanged(prevState)) return;
+
+        // 4) 兜底：滚动主视频容器
+        scrollPage(direction);
+      }, 120);
+    }, 120);
   }
 
   // ---------- 提示浮层（Shadow DOM 隔离样式）----------
@@ -284,11 +359,11 @@
       }
       // 短视频模式：像手指刷视频一样滚动页面（一屏）
       case 'scroll_down': {
-        scrollPage('down');
+        swipeVideo('down');
         return { status: 'ok', toast: '⬇ 向下滑动' };
       }
       case 'scroll_up': {
-        scrollPage('up');
+        swipeVideo('up');
         return { status: 'ok', toast: '⬆ 向上滑动' };
       }
       default:

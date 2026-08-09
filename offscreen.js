@@ -374,12 +374,12 @@ function onHandsResults(results) {
   }
 
   // 单个食指上/下（一次性）：
-  //   长视频模式 = 上一个/下一个视频；短视频模式 = 向下/向上滑动
+  //   长视频模式 = 上一个/下一个视频；短视频模式 = 按 ↑/↓ 方向键切换视频
   if (stable && (pose.name === '食指向上' || pose.name === '食指向下') &&
       now - state.lastActionTime >= state.debounceMs) {
     state.lastActionTime = now;
     if (state.shortVideoMode) {
-      triggerAction(pose.name === '食指向上' ? 'scroll_down' : 'scroll_up', pose.name);
+      triggerAction(pose.name === '食指向上' ? 'scroll_up' : 'scroll_down', pose.name);
     } else {
       triggerAction(pose.name === '食指向上' ? 'prev' : 'next', pose.name);
     }
@@ -428,7 +428,7 @@ async function toggleShortVideoMode() {
   state.shortVideoMode = next;
   // 离屏文档无法直接写 storage，交给后台 Service Worker 落盘并通知其他界面
   chrome.runtime.sendMessage({ type: 'SHORT_VIDEO_MODE_SET', value: next }).catch(() => {});
-  setGesture('手掌张开', next ? '已切换到短视频模式（食指上=下滑，食指下=上滑）' : '已切回长视频模式');
+  setGesture('手掌张开', next ? '已切换到短视频模式（食指上=↑，食指下=↓）' : '已切回长视频模式');
   notify();
 }
 
