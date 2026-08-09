@@ -12,9 +12,9 @@
 //   13~16   无名指：MCP / PIP / DIP / 指尖
 //   17~20   小指：MCP / PIP / DIP / 指尖
 //
-// 输出：{ name, snap, detail }
+// 输出：{ name, ok, detail }
 //   name   —— 手势中文名称
-//   snap   —— 是否为“拇指尖 + 中指尖”捏合姿势（打响指检测用）
+//   ok     —— 是否为“拇指尖 + 食指尖”捏合成圈（OK 手势，播放/暂停用）
 //   detail —— 当前判定的简要说明（用于弹窗提示 / 排查）
 //
 // 分类策略：给每根手指算一个“伸展度”（指尖到指根的距离 ÷ 指根到
@@ -75,25 +75,39 @@ const GestureMath = (() => {
     const palmOpen = indexExt && middleExt && ringExt && pinkyExt &&
                      Math.min(idx, mid, ring, pinky) > EXT_STRONG * 0.9;
 
-    // 打响指：拇指尖（4）与中指尖（12）距离很近（捏合）。
-    // 握拳时拇指常搭在手指上也会靠近中指尖，所以用 allCurled 排除握拳。
-    const snapPose = dist(lm[4], lm[12]) < sz * 0.38;
+    // OK：拇指尖（4）与食指尖（8）捏合成圈，且食指是弯的
+    // （食指伸直时即使拇指靠近也不当 OK，避免和“单个食指”混淆）
+    const okPose = !allCurled && idx < EXT_WEAK && dist(lm[4], lm[8]) < sz * 0.38;
 
-    // 食指上/下：食指明显伸直，且其余三指伸展度明显低于食指
-    // （允许“半弯”，因为现实中其它手指往往不会完全收拢）
-    const indexDominant = idx > EXT_STRONG &&
-      mid < idx * 0.72 && ring < idx * 0.72 && pinky < idx * 0.72;
-    const indexUp = indexDominant && lm[8].y < lm[6].y - 0.015;
-    const indexDown = indexDominant && lm[8].y > lm[6].y + 0.015;
+    // 原来的“打响指”（拇指尖 + 中指尖捏合）已停用：
+    // 识别出来但不触发任何动作，防止残留手型误判成别的指令
+    const thumbMiddlePinch = !allCurled && dist(lm[4], lm[12]) < sz * 0.38;
 
-    if (snapPose && !allCurled) return { name: '打响指', snap: true, detail: '拇指+中指捏合' };
-    if (indexUp) return { name: '食指向上', snap: false, detail: '食指伸直朝上' };
-    if (indexDown) return { name: '食指向下', snap: false, detail: '食指伸直朝下' };
-    if (allCurled) return { name: '握拳', snap: false, detail: '四指收拢' };
-    if (palmOpen) return { name: '手掌张开', snap: false, detail: '四指张开' };
+    // 单个食指：食指明显伸直，其余三指都收着
+    const indexSolo = idx > EXT_STRONG &&
+      mid < EXT_WEAK && ring < EXT_WEAK && pinky < EXT_WEAK &&
+      mid < idx * 0.8 && ring < idx * 0.8 && pinky < idx * 0.8;
+    const indexUp = indexSolo && lm[8].y < lm[6].y - 0.015;
+    const indexDown = indexSolo && lm[8].y > lm[6].y + 0.015;
+
+    // 单个小拇指：小指伸直，其余三指都收着（小指较短，比例放宽一点）
+    const pinkySolo = pinky > EXT_WEAK &&
+      idx < EXT_WEAK && mid < EXT_WEAK && ring < EXT_WEAK &&
+      idx < pinky * 0.85 && mid < pinky * 0.85 && ring < pinky * 0.85;
+    const pinkyUp = pinkySolo && lm[20].y < lm[18].y - 0.012;
+    const pinkyDown = pinkySolo && lm[20].y > lm[18].y + 0.012;
+
+    if (okPose) return { name: 'OK', ok: true, detail: '拇指+食指捏合成圈' };
+    if (thumbMiddlePinch) return { name: '其他手势', ok: false, detail: '拇指+中指捏合（原打响指，已停用）' };
+    if (indexUp) return { name: '食指向上', ok: false, detail: '单个食指伸直朝上' };
+    if (indexDown) return { name: '食指向下', ok: false, detail: '单个食指伸直朝下' };
+    if (pinkyUp) return { name: '小拇指向上', ok: false, detail: '单个小拇指伸直朝上' };
+    if (pinkyDown) return { name: '小拇指向下', ok: false, detail: '单个小拇指伸直朝下' };
+    if (allCurled) return { name: '握拳', ok: false, detail: '四指收拢' };
+    if (palmOpen) return { name: '手掌张开', ok: false, detail: '四指张开' };
     return {
       name: '其他手势',
-      snap: false,
+      ok: false,
       detail: '食指' + fingerLabel(idx) + '·中指' + fingerLabel(mid) +
               '·无名指' + fingerLabel(ring) + '·小指' + fingerLabel(pinky)
     };

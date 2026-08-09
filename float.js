@@ -64,7 +64,7 @@ const state = {
   lastVolumeTime: 0,
   stablePose: '',
   stableFrames: 0,
-  snapPinched: false,
+  okPinched: false,      // OK 手势捏合跳变检测
   palmHistory: []
 };
 
@@ -74,7 +74,9 @@ const WIN_W_MIN = 72;
 const WIN_H_MIN = 72;
 
 const GESTURE_EMOJI = {
-  '打响指': '🤏',
+  'OK': '👌',
+  '小拇指向上': '🤙',
+  '小拇指向下': '🤙',
   '食指向上': '☝️',
   '食指向下': '👇',
   '握拳': '✊',
@@ -638,7 +640,7 @@ function handleRecResult(result) {
   if (!hands || hands.length === 0) {
     drawLandmarks(null);
     setGestureLocal('未检测到手', '把张开的手掌放到摄像头正前方，预览里能看到整只手');
-    state.snapPinched = false;
+    state.okPinched = false;
     state.palmHistory = [];
     state.stablePose = '';
     state.stableFrames = 0;
@@ -659,27 +661,34 @@ function handleRecResult(result) {
   const stable = state.stableFrames >= 3;
   const now = Date.now();
 
-  // 打响指
-  if (pose.snap) {
-    if (!state.snapPinched && stable) {
-      state.snapPinched = true;
+  // OK：捏合跳变触发播放/暂停
+  if (pose.ok) {
+    if (!state.okPinched && stable) {
+      state.okPinched = true;
       if (now - state.lastActionTime >= state.debounceMs) {
         state.lastActionTime = now;
-        sendAction('play_pause', '打响指');
+        sendAction('play_pause', 'OK');
       }
     }
   } else {
-    state.snapPinched = false;
+    state.okPinched = false;
   }
 
-  // 食指上/下：长按连续调音量
-  if (stable && (pose.name === '食指向上' || pose.name === '食指向下')) {
+  // 小拇指上/下：长按连续调音量
+  if (stable && (pose.name === '小拇指向上' || pose.name === '小拇指向下')) {
     if (now - state.lastVolumeTime >= state.volumeRepeatMs) {
       state.lastVolumeTime = now;
-      sendAction(pose.name === '食指向上' ? 'volume_up' : 'volume_down', pose.name);
+      sendAction(pose.name === '小拇指向上' ? 'volume_up' : 'volume_down', pose.name);
     }
   } else {
     state.lastVolumeTime = 0;
+  }
+
+  // 单个食指上/下：切换上一个/下一个视频（一次性）
+  if (stable && (pose.name === '食指向上' || pose.name === '食指向下') &&
+      now - state.lastActionTime >= state.debounceMs) {
+    state.lastActionTime = now;
+    sendAction(pose.name === '食指向上' ? 'prev' : 'next', pose.name);
   }
 
   // 握拳：静音切换

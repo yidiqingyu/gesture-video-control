@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "手势视频控制 · Gesture Video Control",
   "version": "1.0.0",
-  "description": "用摄像头手势控制网页视频播放：打响指播放/暂停，握拳静音，食指上下调音量，手掌上下挥动切换视频。支持 B 站、YouTube 等网站。",
+  "description": "用摄像头手势控制网页视频播放：OK 手势播放/暂停，握拳静音，小拇指上下调音量，食指上下切换视频，手掌挥动切集。支持 B 站、YouTube 等网站。",
   "minimum_chrome_version": "110",
   "permissions": [
     "activeTab",
