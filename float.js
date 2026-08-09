@@ -66,7 +66,6 @@ const state = {
   stablePose: '',
   stableFrames: 0,
   okPinched: false,      // OK 手势捏合跳变检测
-  palmHistory: [],
   handFoundFrames: 0,    // 连续检测到手的帧数（显示防抖用）
   handLostFrames: 0,     // 连续没检测到手的帧数（显示防抖用）
   shortVideoMode: false, // 短视频模式（默认长视频模式）
@@ -672,7 +671,6 @@ function handleRecResult(result) {
     drawLandmarks(null);
     setGestureLocal('未检测到手', '把张开的手掌放到摄像头正前方，预览里能看到整只手');
     state.okPinched = false;
-    state.palmHistory = [];
     state.palmHoldStart = null;
     state.palmHoldTriggered = false;
     state.stablePose = '';
@@ -736,23 +734,8 @@ function handleRecResult(result) {
 
   // 握拳：不再触发任何动作（保留识别，避免握拳被误判成其它手势）
 
-  // 手掌张开：上下挥动切集
+  // 手掌张开：保持 2 秒切换长/短视频模式（上下挥动切集已移除）
   if (pose.name === '手掌张开') {
-    const palmY = (lm[0].y + lm[9].y) / 2;
-    state.palmHistory.push(palmY);
-    if (state.palmHistory.length > 8) state.palmHistory.shift();
-    if (stable && state.palmHistory.length >= 8 && now - state.lastActionTime >= state.debounceMs) {
-      const dy = state.palmHistory[state.palmHistory.length - 1] - state.palmHistory[0];
-      if (dy <= -0.04) {
-        state.lastActionTime = now;
-        state.palmHistory = [];
-        sendAction('next', '手掌上挥');
-      } else if (dy >= 0.04) {
-        state.lastActionTime = now;
-        state.palmHistory = [];
-        sendAction('prev', '手掌下挥');
-      }
-    }
     // 保持 2 秒：切换长/短视频模式（切换一次后需松手重新比才算下一次）
     if (state.palmHoldStart === null) {
       state.palmHoldStart = now;
@@ -761,7 +744,6 @@ function handleRecResult(result) {
       toggleShortVideoMode();
     }
   } else {
-    state.palmHistory = [];
     state.palmHoldStart = null;
     state.palmHoldTriggered = false;
   }
