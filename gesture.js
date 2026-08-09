@@ -75,9 +75,15 @@ const GestureMath = (() => {
     const palmOpen = indexExt && middleExt && ringExt && pinkyExt &&
                      Math.min(idx, mid, ring, pinky) > EXT_STRONG * 0.9;
 
-    // OK：拇指尖（4）与食指尖（8）捏合成圈，且食指是弯的
-    // （食指伸直时即使拇指靠近也不当 OK，避免和“单个食指”混淆）
-    const okPose = !allCurled && idx < EXT_WEAK && dist(lm[4], lm[8]) < sz * 0.38;
+    // OK：拇指尖（4）与食指尖（8）捏合成圈。
+    // 条件：
+    //  - 食指不能明显伸直（避免和“单个食指”混淆），阈值放宽以便稍远距离也能识别；
+    //  - 中指、无名指不能明显弯曲（标准 OK 姿势这两根是伸直的；
+    //    做“单个小拇指”时它们会收着，靠这条把两者区分开，防止误判成 OK）。
+    const okPose = !allCurled &&
+      idx < EXT_STRONG &&
+      mid > CURLED && ring > CURLED &&
+      dist(lm[4], lm[8]) < sz * 0.42;
 
     // 原来的“打响指”（拇指尖 + 中指尖捏合）已停用：
     // 识别出来但不触发任何动作，防止残留手型误判成别的指令
@@ -97,12 +103,14 @@ const GestureMath = (() => {
     const pinkyUp = pinkySolo && lm[20].y < lm[18].y - 0.012;
     const pinkyDown = pinkySolo && lm[20].y > lm[18].y + 0.012;
 
+    // “单个小拇指”特征最明显（小指伸直 + 其余三指收着），放最前面优先判定，
+    // 避免拇指自然靠近其他手指时被 OK / 原打响指残留逻辑误判
+    if (pinkyUp) return { name: '小拇指向上', ok: false, detail: '单个小拇指伸直朝上' };
+    if (pinkyDown) return { name: '小拇指向下', ok: false, detail: '单个小拇指伸直朝下' };
     if (okPose) return { name: 'OK', ok: true, detail: '拇指+食指捏合成圈' };
     if (thumbMiddlePinch) return { name: '其他手势', ok: false, detail: '拇指+中指捏合（原打响指，已停用）' };
     if (indexUp) return { name: '食指向上', ok: false, detail: '单个食指伸直朝上' };
     if (indexDown) return { name: '食指向下', ok: false, detail: '单个食指伸直朝下' };
-    if (pinkyUp) return { name: '小拇指向上', ok: false, detail: '单个小拇指伸直朝上' };
-    if (pinkyDown) return { name: '小拇指向下', ok: false, detail: '单个小拇指伸直朝下' };
     if (allCurled) return { name: '握拳', ok: false, detail: '四指收拢' };
     if (palmOpen) return { name: '手掌张开', ok: false, detail: '四指张开' };
     return {
