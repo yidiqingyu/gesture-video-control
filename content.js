@@ -144,16 +144,38 @@
   // 两种都触发，总有一款生效。
   function findScrollContainer() {
     const root = document.scrollingElement || document.documentElement;
-    if (root.scrollHeight > root.clientHeight + 80) return root;
-    // 页面滚动条不在 window 上时，找一个真正可滚动的容器
-    const els = document.querySelectorAll('body *');
-    for (const el of els) {
-      if (el.scrollHeight > el.clientHeight + 80) {
-        const style = getComputedStyle(el);
-        if (/(auto|scroll|overlay)/.test(style.overflowY)) return el;
+    const isScrollable = (el) => {
+      if (!el || el.scrollHeight <= el.clientHeight + 80) return false;
+      const style = getComputedStyle(el);
+      return /(auto|scroll|overlay)/.test(style.overflowY);
+    };
+
+    // 1) 优先找“主视频所在的可滚动容器”，跟着视频走，避免滚到侧边栏
+    for (const v of document.querySelectorAll('video')) {
+      let el = v.parentElement;
+      while (el && el !== document.body) {
+        if (isScrollable(el)) return el;
+        el = el.parentElement;
       }
     }
-    return root;
+
+    // 2) 页面主滚动条可用时用它
+    if (isScrollable(root)) return root;
+
+    // 3) 兜底：面积最大的可滚动容器（避开窄侧边栏）
+    let best = root;
+    let bestArea = 0;
+    for (const el of document.querySelectorAll('body *')) {
+      if (isScrollable(el)) {
+        const r = el.getBoundingClientRect();
+        const area = r.width * r.height;
+        if (area > bestArea) {
+          bestArea = area;
+          best = el;
+        }
+      }
+    }
+    return best;
   }
 
   function sendDirectionKey(direction) {
