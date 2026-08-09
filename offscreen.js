@@ -36,6 +36,8 @@ const state = {
   stableFrames: 0,
   okPinched: false,      // OK 手势捏合跳变检测
   palmHistory: [],       // 手掌上下挥动检测
+  handFoundFrames: 0,    // 连续检测到手的帧数（显示防抖用）
+  handLostFrames: 0,     // 连续没检测到手的帧数（显示防抖用）
   debounceMs: 900,
   volumeStep: 0.1,
   volumeRepeatMs: 650,
@@ -52,6 +54,11 @@ const state = {
   errorText: '',
   videoStatus: { text: '正在检测当前页面…', kind: '' }
 };
+
+// 显示防抖：身体晃动造成的“疑似手”会一闪而过。
+// 连续 3 帧检测到手才恢复手势显示；连续 6 帧没检测到手才显示“未检测到手”。
+const FOUND_HAND_MIN_FRAMES = 3;
+const LOST_HAND_MIN_FRAMES = 6;
 
 // ============================================================
 // 消息处理（来自弹窗）
@@ -155,9 +162,9 @@ async function loadHandsModel() {
       baseOptions: baseOptions,
       runningMode: 'VIDEO',
       numHands: 2,
-      minHandDetectionConfidence: 0.3,
-      minHandPresenceConfidence: 0.3,
-      minTrackingConfidence: 0.3
+      minHandDetectionConfidence: 0.5,
+      minHandPresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5
     };
     // GPU 优先；部分显卡/驱动上 GPU 委托失败时自动回退 CPU
     let landmarker;
@@ -269,9 +276,9 @@ function scheduleGpuFallback() {
         },
         runningMode: 'VIDEO',
         numHands: 2,
-        minHandDetectionConfidence: 0.3,
-        minHandPresenceConfidence: 0.3,
-        minTrackingConfidence: 0.3
+        minHandDetectionConfidence: 0.5,
+        minHandPresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5
       });
       state.hands = landmarker;
       state.errorText = '';
@@ -292,6 +299,10 @@ function onHandsResults(results) {
   // 新版 HandLandmarker 的结果结构：results.landmarks = [每只手的 21 个关键点]
   const hands = results && results.landmarks;
   if (!hands || hands.length === 0) {
+    state.handFoundFrames = 0;
+    state.handLostFrames += 1;
+    // 偶发漏检（一两帧没跟上）不立即切换显示，避免 UI 闪烁
+    if (state.handLostFrames < LOST_HAND_MIN_FRAMES) return;
     if (state.handDetected) {
       state.handDetected = false;
       notify();
@@ -303,6 +314,11 @@ function onHandsResults(results) {
     state.stableFrames = 0;
     return;
   }
+
+  state.handLostFrames = 0;
+  state.handFoundFrames += 1;
+  // 刚“出现”的手需要连续几帧确认，过滤身体误检的闪现
+  if (state.handFoundFrames < FOUND_HAND_MIN_FRAMES) return;
 
   const lm = hands[0];
   const pose = GestureMath.classifyPose(lm);
