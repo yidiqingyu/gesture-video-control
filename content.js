@@ -137,6 +137,46 @@
       : { status: 'error', message: '未找到“上一集”按钮（该页面可能不支持切集）' };
   }
 
+  // ---------- 短视频滑动（滚动 + 方向键双管齐下）----------
+  // 抖音等短视频站：
+  //   - 推荐流靠“滚动容器”把下一个视频滚进视口；
+  //   - 视频详情页 / YouTube Shorts 靠“方向键”切换视频。
+  // 两种都触发，总有一款生效。
+  function findScrollContainer() {
+    const root = document.scrollingElement || document.documentElement;
+    if (root.scrollHeight > root.clientHeight + 80) return root;
+    // 页面滚动条不在 window 上时，找一个真正可滚动的容器
+    const els = document.querySelectorAll('body *');
+    for (const el of els) {
+      if (el.scrollHeight > el.clientHeight + 80) {
+        const style = getComputedStyle(el);
+        if (/(auto|scroll|overlay)/.test(style.overflowY)) return el;
+      }
+    }
+    return root;
+  }
+
+  function sendDirectionKey(direction) {
+    const key = direction === 'down' ? 'ArrowDown' : 'ArrowUp';
+    const code = key;
+    const keyCode = direction === 'down' ? 40 : 38;
+    const evt = new KeyboardEvent('keydown', {
+      key, code, bubbles: true, cancelable: true
+    });
+    // 兼容只读 keyCode 的老式监听器
+    Object.defineProperty(evt, 'keyCode', { get: () => keyCode });
+    Object.defineProperty(evt, 'which', { get: () => keyCode });
+    document.dispatchEvent(evt);
+  }
+
+  function scrollPage(direction) {
+    const el = findScrollContainer();
+    const distance = (direction === 'down' ? 1 : -1) * Math.max(el.clientHeight || 480, 480);
+    el.scrollBy({ top: distance, behavior: 'smooth' });
+    sendDirectionKey(direction);
+    return { status: 'ok' };
+  }
+
   // ---------- 提示浮层（Shadow DOM 隔离样式）----------
   let toastHost = null;
   let toastBox = null;
@@ -222,11 +262,11 @@
       }
       // 短视频模式：像手指刷视频一样滚动页面（一屏）
       case 'scroll_down': {
-        window.scrollBy({ top: window.innerHeight, behavior: 'smooth' });
+        scrollPage('down');
         return { status: 'ok', toast: '⬇ 向下滑动' };
       }
       case 'scroll_up': {
-        window.scrollBy({ top: -window.innerHeight, behavior: 'smooth' });
+        scrollPage('up');
         return { status: 'ok', toast: '⬆ 向上滑动' };
       }
       default:
