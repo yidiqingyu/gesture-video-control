@@ -352,6 +352,341 @@
     }, TOAST_DURATION);
   }
 
+  // ============================================================
+  // 悬浮面板（页面内画中画：可拖动 / 缩放 / 隐藏摄像头画面）
+  // ============================================================
+  const PANEL_DEFAULT_W = 300;
+  const PANEL_DEFAULT_H = 470;
+  const PANEL_MIN_W = 220;
+  const PANEL_MIN_H = 180;
+
+  const GESTURE_EMOJI = {
+    'OK': '👌',
+    '小拇指向上': '🤙',
+    '小拇指向下': '🤙',
+    '食指向上': '☝️',
+    '食指向下': '👇',
+    '手掌张开': '🖐️',
+    '握拳': '✊',
+    '未检测到手': '🚫',
+    '其他手势': '🖐️'
+  };
+
+  let panelHost = null;
+  let panelShadow = null;
+  let panelPreview = null;
+  let panelPreviewStream = null;
+  let panelMinimized = false;
+
+  function panelCss() {
+    return `
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      .gvc-panel {
+        position: fixed; z-index: 2147483646;
+        width: 300px; height: 470px;
+        min-width: 220px; min-height: 180px;
+        background: #ffffff;
+        border-radius: 12px;
+        box-shadow: 0 12px 36px rgba(0,0,0,.28);
+        display: flex; flex-direction: column;
+        overflow: hidden;
+        font-family: "Microsoft YaHei", system-ui, sans-serif;
+        color: #1f2328;
+        user-select: none;
+      }
+      .gvc-panel.minimized { display: none; }
+      .gvc-bar {
+        height: 38px; flex: none;
+        background: linear-gradient(135deg, #165dff, #4f8bff);
+        color: #fff;
+        display: flex; align-items: center;
+        padding: 0 8px 0 12px;
+        cursor: move;
+        gap: 4px;
+      }
+      .gvc-title { font-size: 13px; font-weight: 600; flex: 1; overflow: hidden; white-space: nowrap; }
+      .gvc-bar button {
+        width: 24px; height: 24px; border: none; border-radius: 6px;
+        background: rgba(255,255,255,.16); color: #fff;
+        font-size: 12px; cursor: pointer; line-height: 1;
+      }
+      .gvc-bar button:hover { background: rgba(255,255,255,.32); }
+      .gvc-preview-wrap {
+        flex: none; height: 170px; background: #0b0e14;
+        display: flex; align-items: center; justify-content: center;
+        position: relative; overflow: hidden;
+      }
+      .gvc-preview-wrap.hidden { display: none; }
+      .gvc-preview { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .gvc-placeholder { color: #9aa3af; font-size: 12px; text-align: center; padding: 0 12px; }
+      .gvc-body {
+        flex: 1; padding: 10px 12px 12px;
+        display: flex; flex-direction: column; gap: 8px;
+        overflow-y: auto;
+      }
+      .gvc-gesture { display: flex; align-items: center; gap: 10px; }
+      .gvc-gesture-emoji { font-size: 24px; }
+      .gvc-gesture-name { font-size: 15px; font-weight: 600; }
+      .gvc-gesture-detail { font-size: 11px; color: #8a919b; }
+      .gvc-status { font-size: 12px; color: #57606a; background: #f6f8ff; border-radius: 8px; padding: 6px 10px; }
+      .gvc-row { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+      .gvc-row input { width: 34px; height: 18px; accent-color: #165dff; cursor: pointer; }
+      .gvc-resize {
+        position: absolute; right: 0; bottom: 0;
+        width: 18px; height: 18px; cursor: nwse-resize;
+        background: linear-gradient(135deg, transparent 50%, #b9c2d0 50%);
+        border-bottom-right-radius: 12px;
+      }
+      .gvc-pill {
+        position: fixed; z-index: 2147483647;
+        right: 18px; bottom: 18px;
+        width: 52px; height: 52px; border-radius: 50%;
+        background: linear-gradient(135deg, #165dff, #4f8bff);
+        color: #fff; display: flex; align-items: center; justify-content: center;
+        font-size: 24px; cursor: pointer;
+        box-shadow: 0 8px 24px rgba(22,93,255,.4);
+      }
+      .gvc-pill.hidden { display: none; }
+    `;
+  }
+
+  async function showFloatPanel() {
+    if (panelHost && panelHost.isConnected) {
+      // 已打开：从最小化状态恢复
+      const root = panelShadow && panelShadow.querySelector('.gvc-panel');
+      const pill = panelShadow && panelShadow.querySelector('.gvc-pill');
+      if (root) root.classList.remove('minimized');
+      if (pill) pill.classList.add('hidden');
+      panelMinimized = false;
+      return;
+    }
+
+    panelHost = document.createElement('div');
+    panelHost.id = 'gesture-video-control-panel-host';
+    panelShadow = panelHost.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    style.textContent = panelCss();
+    panelShadow.appendChild(style);
+
+    const root = document.createElement('div');
+    root.className = 'gvc-panel';
+    root.innerHTML = `
+      <div class="gvc-bar">
+        <span class="gvc-title">🎮 手势视频控制</span>
+        <button data-act="preview" title="显示 / 隐藏摄像头画面">👁</button>
+        <button data-act="min" title="最小化">—</button>
+        <button data-act="close" title="关闭悬浮面板">✕</button>
+      </div>
+      <div class="gvc-preview-wrap">
+        <video class="gvc-preview" autoplay muted playsinline></video>
+        <div class="gvc-placeholder">正在打开摄像头预览…</div>
+      </div>
+      <div class="gvc-body">
+        <div class="gvc-gesture">
+          <span class="gvc-gesture-emoji">🖐️</span>
+          <div>
+            <div class="gvc-gesture-name">等待识别…</div>
+            <div class="gvc-gesture-detail"></div>
+          </div>
+        </div>
+        <div class="gvc-status">正在连接后台识别…</div>
+        <label class="gvc-row"><span>手势控制</span><input type="checkbox" data-ctl="control"></label>
+        <label class="gvc-row"><span>短视频模式</span><input type="checkbox" data-ctl="short"></label>
+      </div>
+      <div class="gvc-resize"></div>
+    `;
+    panelShadow.appendChild(root);
+
+    const pill = document.createElement('div');
+    pill.className = 'gvc-pill hidden';
+    pill.textContent = '🎮';
+    pill.title = '恢复悬浮面板';
+    panelShadow.appendChild(pill);
+
+    // 位置与尺寸（记忆上次，否则默认右上角）
+    const saved = await chrome.storage.local.get(['gvcPanelPos', 'gvcPanelSize']).catch(() => ({}));
+    const w = (saved.gvcPanelSize && saved.gvcPanelSize.width >= PANEL_MIN_W) ? saved.gvcPanelSize.width : PANEL_DEFAULT_W;
+    const h = (saved.gvcPanelSize && saved.gvcPanelSize.height >= PANEL_MIN_H) ? saved.gvcPanelSize.height : PANEL_DEFAULT_H;
+    let left = (saved.gvcPanelPos && typeof saved.gvcPanelPos.left === 'number') ? saved.gvcPanelPos.left : window.innerWidth - w - 20;
+    let top = (saved.gvcPanelPos && typeof saved.gvcPanelPos.top === 'number') ? saved.gvcPanelPos.top : 80;
+    left = Math.max(4, Math.min(left, window.innerWidth - 60));
+    top = Math.max(4, Math.min(top, window.innerHeight - 40));
+    root.style.width = w + 'px';
+    root.style.height = h + 'px';
+    root.style.left = left + 'px';
+    root.style.top = top + 'px';
+
+    panelPreview = root.querySelector('.gvc-preview');
+    initPanelInteractions(root, pill);
+    document.documentElement.appendChild(panelHost);
+    startPanelPreview();
+
+    // 初始化开关状态
+    chrome.storage.local.get(['controlOn', 'shortVideoMode', 'volumeStep', 'debounceMs', 'volumeRepeatMs'], (s) => {
+      const ctl = root.querySelector('[data-ctl="control"]');
+      const short = root.querySelector('[data-ctl="short"]');
+      if (ctl) ctl.checked = !!s.controlOn;
+      if (short) short.checked = !!s.shortVideoMode;
+      panelSettings = {
+        volumeStep: typeof s.volumeStep === 'number' ? s.volumeStep : 0.1,
+        debounceMs: typeof s.debounceMs === 'number' ? s.debounceMs : 900,
+        volumeRepeatMs: typeof s.volumeRepeatMs === 'number' ? s.volumeRepeatMs : 650
+      };
+    });
+
+    // 注册状态转发目标，并立即拉一次后台状态
+    chrome.runtime.sendMessage({ type: 'PANEL_ATTACH' }).catch(() => {});
+    showToast('悬浮面板已打开');
+  }
+
+  // 面板当前使用的设置（开关启动引擎时传给后台）
+  let panelSettings = { volumeStep: 0.1, debounceMs: 900, volumeRepeatMs: 650 };
+
+  function initPanelInteractions(root, pill) {
+    const bar = root.querySelector('.gvc-bar');
+    const resize = root.querySelector('.gvc-resize');
+    const ctl = root.querySelector('[data-ctl="control"]');
+    const short = root.querySelector('[data-ctl="short"]');
+    let drag = null;
+
+    bar.addEventListener('mousedown', (e) => {
+      if (e.target.closest('button')) return;
+      drag = {
+        type: 'move',
+        startX: e.clientX, startY: e.clientY,
+        left: root.offsetLeft, top: root.offsetTop
+      };
+      e.preventDefault();
+    });
+    resize.addEventListener('mousedown', (e) => {
+      drag = {
+        type: 'resize',
+        startX: e.clientX, startY: e.clientY,
+        w: root.offsetWidth, h: root.offsetHeight
+      };
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!drag) return;
+      if (drag.type === 'move') {
+        const left = Math.max(4, Math.min(drag.left + (e.clientX - drag.startX), window.innerWidth - 60));
+        const top = Math.max(4, Math.min(drag.top + (e.clientY - drag.startY), window.innerHeight - 40));
+        root.style.left = left + 'px';
+        root.style.top = top + 'px';
+      } else {
+        root.style.width = Math.max(PANEL_MIN_W, drag.w + (e.clientX - drag.startX)) + 'px';
+        root.style.height = Math.max(PANEL_MIN_H, drag.h + (e.clientY - drag.startY)) + 'px';
+      }
+    });
+    document.addEventListener('mouseup', () => {
+      if (drag) {
+        chrome.storage.local.set({
+          gvcPanelPos: { left: root.offsetLeft, top: root.offsetTop },
+          gvcPanelSize: { width: root.offsetWidth, height: root.offsetHeight }
+        }).catch(() => {});
+        drag = null;
+      }
+    });
+
+    root.querySelector('[data-act="preview"]').addEventListener('click', () => {
+      root.querySelector('.gvc-preview-wrap').classList.toggle('hidden');
+    });
+    root.querySelector('[data-act="min"]').addEventListener('click', () => {
+      root.classList.add('minimized');
+      pill.classList.remove('hidden');
+      panelMinimized = true;
+    });
+    root.querySelector('[data-act="close"]').addEventListener('click', hideFloatPanel);
+    pill.addEventListener('click', () => {
+      pill.classList.add('hidden');
+      root.classList.remove('minimized');
+      panelMinimized = false;
+    });
+
+    ctl.addEventListener('change', () => {
+      const on = ctl.checked;
+      chrome.runtime.sendMessage({
+        type: 'PANEL_CONTROL', on,
+        shortVideoMode: short.checked,
+        volumeStep: panelSettings.volumeStep,
+        debounceMs: panelSettings.debounceMs,
+        volumeRepeatMs: panelSettings.volumeRepeatMs
+      }).then((r) => {
+        if (r && r.ok === false) {
+          ctl.checked = !on;
+          setPanelStatusText('❌ ' + ((r.error) || '启动失败'));
+        }
+      }).catch(() => {});
+    });
+    short.addEventListener('change', () => {
+      const value = short.checked;
+      chrome.storage.local.set({ shortVideoMode: value }).catch(() => {});
+      chrome.runtime.sendMessage({ type: 'OFFSCREEN_SET_MODE', shortVideoMode: value }).catch(() => {});
+      showToast(value ? '已切换到短视频模式（食指上=↑，食指下=↓）' : '已切回长视频模式');
+    });
+  }
+
+  function setPanelStatusText(text) {
+    if (!panelShadow) return;
+    const s = panelShadow.querySelector('.gvc-status');
+    if (s) s.textContent = text;
+  }
+
+  function applyPanelStatus(s) {
+    if (!panelShadow) return;
+    const root = panelShadow.querySelector('.gvc-panel');
+    if (!root) return;
+    const name = root.querySelector('.gvc-gesture-name');
+    const detail = root.querySelector('.gvc-gesture-detail');
+    const emoji = root.querySelector('.gvc-gesture-emoji');
+    if (s.gesture) {
+      name.textContent = s.gesture;
+      emoji.textContent = GESTURE_EMOJI[s.gesture] || '🖐️';
+    }
+    if (s.detail) detail.textContent = s.detail;
+    if (s.running) {
+      setPanelStatusText(s.errorText ? '❌ ' + s.errorText : '✅ 后台识别运行中');
+    } else {
+      setPanelStatusText('⏸ 后台识别未运行');
+    }
+  }
+
+  async function startPanelPreview() {
+    if (!panelPreview) return;
+    const placeholder = panelShadow.querySelector('.gvc-placeholder');
+    try {
+      panelPreviewStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+        audio: false
+      });
+      panelPreview.srcObject = panelPreviewStream;
+      await panelPreview.play().catch(() => {});
+      if (placeholder) placeholder.textContent = '';
+    } catch (e) {
+      if (placeholder) placeholder.textContent = '预览不可用（识别仍在后台运行）';
+    }
+  }
+
+  function stopPanelPreview() {
+    if (panelPreviewStream) {
+      panelPreviewStream.getTracks().forEach((t) => t.stop());
+      panelPreviewStream = null;
+    }
+    if (panelPreview) panelPreview.srcObject = null;
+  }
+
+  function hideFloatPanel() {
+    stopPanelPreview();
+    if (panelHost && panelHost.parentNode) {
+      panelHost.parentNode.removeChild(panelHost);
+    }
+    panelHost = null;
+    panelShadow = null;
+    panelPreview = null;
+    panelMinimized = false;
+  }
+
   // ---------- 动作执行（含浮层反馈文案）----------
   async function handleGestureAction(message) {
     const action = message.action;
@@ -415,6 +750,14 @@
           return { type: 'PONG' };
         case 'GET_STATUS':
           return getVideoStatus();
+        case 'SHOW_FLOAT_PANEL': {
+          showFloatPanel();
+          return { status: 'ok' };
+        }
+        case 'PANEL_STATUS': {
+          applyPanelStatus(message.payload || {});
+          return { status: 'ok' };
+        }
         case 'GESTURE_ACTION': {
           const result = await handleGestureAction(message);
           // 页面提示浮层反馈

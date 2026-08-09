@@ -10,6 +10,9 @@
 
 'use strict';
 
+// 当前手势控制作用的标签页（悬浮面板 / 弹窗启动后台识别时记录）
+let controlTabId = null;
+
 // ---------- 默认设置 ----------
 const DEFAULT_SETTINGS = {
   // 一次性手势（OK / 食指切集 / 挥掌）触发后的冷却时间（毫秒）
@@ -38,6 +41,15 @@ chrome.runtime.onInstalled.addListener(() => {
 // ---------- 消息路由 ----------
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== 'string') return;
+
+  // 后台识别引擎的状态广播 → 转发给控制中的标签页（悬浮面板显示用）
+  if (message.type === 'OFFSCREEN_UPDATE' && controlTabId) {
+    chrome.tabs.sendMessage(controlTabId, {
+      type: 'PANEL_STATUS',
+      payload: message
+    }).catch(() => {});
+    return; // 广播消息，不异步响应
+  }
 
   // 离屏文档 -> 标签页 content script 的转发请求
   if (message.type === 'TAB_MESSAGE') {
@@ -106,7 +118,93 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.storage.local.set({ shortVideoMode: !!message.value });
     sendResponse({ ok: true });
   }
+
+  // 悬浮面板：开启 / 关闭手势控制（由后台统一管理离屏识别引擎）
+  if (message.type === 'PANEL_CONTROL') {
+    (async () => {
+      try {
+        const tabId = message.tabId || (sender && sender.tab && sender.tab.id);
+        if (message.on) {
+          const ok = await ensureOffscreen();
+          if (!ok) {
+            sendResponse({ ok: false, error: '后台识别页创建失败' });
+            return;
+          }
+          controlTabId = tabId || controlTabId;
+          await chrome.storage.local.set({ controlOn: true });
+          chrome.runtime.sendMessage({
+            type: 'OFFSCREEN_START',
+            tabId: controlTabId,
+            shortVideoMode: message.shortVideoMode,
+            volumeStep: message.volumeStep,
+            debounceMs: message.debounceMs,
+            volumeRepeatMs: message.volumeRepeatMs
+          }).catch(() => {});
+          sendResponse({ ok: true });
+        } else {
+          chrome.runtime.sendMessage({ type: 'OFFSCREEN_STOP' }).catch(() => {});
+          await chrome.storage.local.set({ controlOn: false });
+          sendResponse({ ok: true });
+        }
+      } catch (e) {
+        sendResponse({ ok: false, error: String((e && e.message) || e) });
+      }
+    })();
+    return true; // 异步响应
+  }
+
+  // 悬浮面板显示时注册状态转发目标（引擎可能已由弹窗启动）
+  if (message.type === 'PANEL_ATTACH') {
+    const tabId = message.tabId || (sender && sender.tab && sender.tab.id);
+    if (tabId) controlTabId = tabId;
+    // 把当前后台引擎状态立即回给面板
+    chrome.runtime.sendMessage({ type: 'OFFSCREEN_GET_STATUS' }, (resp) => {
+      if (resp && resp.type === 'OFFSCREEN_UPDATE') {
+        chrome.tabs.sendMessage(tabId, { type: 'PANEL_STATUS', payload: resp }).catch(() => {});
+      }
+    });
+    sendResponse({ ok: true });
+  }
 });
+
+// ---------- 离屏文档管理（供悬浮面板使用）----------
+async function ensureOffscreen() {
+  try {
+    const exists = await chrome.offscreen.hasDocument();
+    if (!exists) {
+      await chrome.offscreen.createDocument({
+        url: 'offscreen.html',
+        reasons: ['USER_MEDIA'],
+        justification: '在后台运行摄像头手势识别，用户无需保持弹窗打开'
+      });
+      await waitForOffscreenReady();
+    }
+    return true;
+  } catch (e) {
+    console.warn('[手势视频控制] 离屏文档创建失败：', e);
+    return false;
+  }
+}
+
+function waitForOffscreenReady(timeoutMs) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok) => {
+      if (!done) {
+        done = true;
+        chrome.runtime.onMessage.removeListener(onMsg);
+        resolve(ok);
+      }
+    };
+    const onMsg = (msg) => {
+      if (msg && msg.type === 'OFFSCREEN_READY') {
+        finish(true);
+      }
+    };
+    chrome.runtime.onMessage.addListener(onMsg);
+    setTimeout(() => finish(false), timeoutMs || 5000);
+  });
+}
 
 // 悬浮窗被关闭时，清理记录的窗口 id（下次可重新创建）
 chrome.windows.onRemoved.addListener((windowId) => {

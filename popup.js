@@ -236,6 +236,14 @@ async function onToggleChange() {
 async function onShortToggleChange() {
   state.shortVideoMode = !!els.shortToggle.checked;
   await chrome.storage.local.set({ shortVideoMode: state.shortVideoMode });
+  // 离屏引擎无法直接读 storage，通过消息即时同步
+  sendToBackground({
+    type: 'OFFSCREEN_SET_MODE',
+    shortVideoMode: state.shortVideoMode,
+    volumeStep: state.volumeStep,
+    debounceMs: state.debounceMs,
+    volumeRepeatMs: state.volumeRepeatMs
+  });
   setModelStatus(state.shortVideoMode ? '已切换到短视频模式（食指上=下滑，食指下=上滑）' : '已切回长视频模式');
 }
 
@@ -370,21 +378,23 @@ function onGrantClick() {
   window.close();
 }
 
-// 打开悬浮窗：交给 Service Worker 创建（更稳定），可拖动 / 最小化 / 隐藏画面
+// 打开悬浮面板：在当前页面注入可拖动 / 缩放 / 隐藏画面的悬浮面板
 async function onOpenFloat() {
-  setModelStatus('⏳ 正在打开悬浮窗…');
-  let resp;
+  setModelStatus('⏳ 正在打开悬浮面板…');
   try {
-    resp = await chrome.runtime.sendMessage({ type: 'OPEN_FLOAT', tabId: state.activeTabId });
+    const injected = await ensureContentScript();
+    if (!injected) {
+      setModelStatus('❌ 无法在此页面打开悬浮面板');
+      return;
+    }
+    const resp = await chrome.tabs.sendMessage(state.activeTabId, { type: 'SHOW_FLOAT_PANEL' });
+    if (resp && resp.status === 'ok') {
+      setModelStatus('✅ 悬浮面板已打开（可关闭本弹窗）');
+    } else {
+      setModelStatus('❌ 打开悬浮面板失败：' + ((resp && resp.error) || '未知错误'));
+    }
   } catch (e) {
-    resp = { ok: false, error: String((e && e.message) || e) };
-  }
-  if (resp && resp.ok) {
-    setModelStatus('✅ 悬浮窗已打开（可关闭本弹窗）');
-  } else if (resp && resp.fallback) {
-    setModelStatus('✅ 已用标签页方式打开悬浮窗');
-  } else {
-    setModelStatus('❌ 打开悬浮窗失败：' + ((resp && resp.error) || '未知错误'));
+    setModelStatus('❌ 打开悬浮面板失败：' + ((e && e.message) || e));
   }
 }
 

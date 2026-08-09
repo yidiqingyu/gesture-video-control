@@ -86,6 +86,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       stopEngine();
       sendResponse({ ok: true });
       break;
+    case 'OFFSCREEN_SET_MODE':
+      // 弹窗 / 悬浮面板切换短视频模式时即时同步（离屏文档无法直接读 storage）
+      if (typeof message.shortVideoMode === 'boolean') {
+        state.shortVideoMode = message.shortVideoMode;
+      }
+      if (typeof message.volumeStep === 'number') state.volumeStep = message.volumeStep;
+      if (typeof message.debounceMs === 'number') state.debounceMs = message.debounceMs;
+      if (typeof message.volumeRepeatMs === 'number') state.volumeRepeatMs = message.volumeRepeatMs;
+      notify();
+      sendResponse({ ok: true });
+      break;
     case 'OFFSCREEN_GET_STATUS':
       sendResponse(buildStatus());
       break;
