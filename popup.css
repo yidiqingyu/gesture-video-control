@@ -180,31 +180,6 @@ h1 {
   color: #ffd27f;
 }
 
-/* ---------- 引擎视角诊断图 ---------- */
-.engine-view-wrap {
-  margin-top: 8px;
-}
-
-.engine-view-wrap[hidden] {
-  display: none;
-}
-
-.engine-view-label {
-  font-size: 11px;
-  color: #6f819b;
-  display: block;
-  margin-bottom: 4px;
-}
-
-.engine-view {
-  width: 160px;
-  height: 120px;
-  border-radius: 8px;
-  border: 1px solid #24324a;
-  object-fit: cover;
-  display: block;
-}
-
 /* ---------- 开关 ---------- */
 .switch-row {
   display: flex;

@@ -25,8 +25,6 @@ const els = {
   gestureDetail: document.getElementById('gesture-detail'),
   modelStatus: document.getElementById('model-status'),
   videoStatus: document.getElementById('video-status'),
-  engineViewWrap: document.getElementById('engine-view-wrap'),
-  engineView: document.getElementById('engine-view'),
   toggle: document.getElementById('control-toggle'),
   shortToggle: document.getElementById('short-toggle')
 };
@@ -285,11 +283,6 @@ function onRuntimeMessage(message) {
   if (!message || typeof message.type !== 'string') return;
   if (message.type === 'OFFSCREEN_UPDATE') {
     applyBackgroundStatus(message);
-  } else if (message.type === 'OFFSCREEN_SNAPSHOT') {
-    if (els.engineView && message.dataUrl) {
-      els.engineView.src = message.dataUrl;
-      if (els.engineViewWrap) els.engineViewWrap.hidden = false;
-    }
   }
 }
 
@@ -320,10 +313,6 @@ function applyBackgroundStatus(s) {
     setVideoStatus(s.videoStatus.text, s.videoStatus.kind);
   }
 
-  // 一旦检测到手，隐藏“引擎视角”诊断图
-  if (s.handDetected && els.engineViewWrap) {
-    els.engineViewWrap.hidden = true;
-  }
 }
 
 // ============================================================

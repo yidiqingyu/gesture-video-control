@@ -48,8 +48,6 @@ const state = {
   handDetected: false,
   frames: 0,             // 已成功处理的帧数（诊断用：判断引擎是否在跑）
   frameErrors: 0,        // 连续失败的帧数（诊断用：静默失败不再吞掉）
-  lastDebugTime: 0,      // 最近一次发送“引擎视角”诊断图的时间
-  debugTimer: null,      // 诊断图定时器
   frameTimer: null,      // 帧循环定时器（离屏文档不可见，rAF 不触发，必须用定时器）
   usedCpuDelegate: false,// 是否已使用 CPU 委托（部分机器 GPU 模式检测为空）
   gpuFallbackTimer: null,// GPU 无检测结果时自动切 CPU 的定时器
@@ -141,10 +139,6 @@ function stopEngine() {
   }
   state.hands = null;
   state.modelReady = false;
-  if (state.debugTimer) {
-    clearInterval(state.debugTimer);
-    state.debugTimer = null;
-  }
   if (state.gpuFallbackTimer) {
     clearTimeout(state.gpuFallbackTimer);
     state.gpuFallbackTimer = null;
@@ -201,9 +195,6 @@ async function loadHandsModel() {
     state.hands = landmarker;
     state.usedCpuDelegate = usedCpu;
     state.modelReady = true;
-    // 检测不到手时，周期性把引擎实际看到的画面发给弹窗/悬浮窗（诊断用）
-    if (state.debugTimer) clearInterval(state.debugTimer);
-    state.debugTimer = setInterval(maybeSendDebugSnapshot, 2500);
     // GPU 模式跑一会儿仍检测不到手 → 自动切换 CPU（更兼容）
     scheduleGpuFallback();
     notify();
@@ -251,25 +242,6 @@ const FRAME_INTERVAL_MS = 33;
 function scheduleNextFrame() {
   if (state.frameTimer) clearTimeout(state.frameTimer);
   state.frameTimer = setTimeout(processFrame, FRAME_INTERVAL_MS);
-}
-
-// 引擎视角诊断图：当检测不到手时，把后台摄像头当前帧发给界面
-function maybeSendDebugSnapshot() {
-  if (!state.modelReady || state.handDetected) return;
-  const now = Date.now();
-  if (now - state.lastDebugTime < 2500) return;
-  state.lastDebugTime = now;
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 320;
-    canvas.height = 240;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(els.camera, 0, 0, 320, 240);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
-    chrome.runtime.sendMessage({ type: 'OFFSCREEN_SNAPSHOT', dataUrl: dataUrl }).catch(() => {});
-  } catch (e) {
-    // 单帧诊断失败忽略
-  }
 }
 
 // GPU 模式几秒内检测不到手时，自动重建为 CPU 委托（部分机器 GPU/WebGL 渲染异常）
