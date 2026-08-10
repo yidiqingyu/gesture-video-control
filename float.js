@@ -63,6 +63,7 @@ const state = {
   lastVolumeTime: 0,
   stablePose: '',
   stableFrames: 0,
+  singleLikeFrames: 0,
   bothLikeFrames: 0,      // 双手同时点赞的连续帧数（一键三连用）
   okPinched: false,      // OK 手势捏合跳变检测
   handFoundFrames: 0,    // 连续检测到手的帧数（显示防抖用）
@@ -76,6 +77,7 @@ const state = {
 // 连续 3 帧检测到手才恢复手势显示；连续 6 帧没检测到手才显示“未检测到手”。
 const FOUND_HAND_MIN_FRAMES = 3;
 const LOST_HAND_MIN_FRAMES = 6;
+const SINGLE_LIKE_CONFIRM_FRAMES = 6;
 
 const WIN_W = 300;
 const WIN_H = 480;
@@ -519,9 +521,9 @@ async function startRecognition() {
       baseOptions: baseOptions,
       runningMode: 'VIDEO',
       numHands: 2,
-      minHandDetectionConfidence: 0.5,
-      minHandPresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5
+      minHandDetectionConfidence: 0.4,
+      minHandPresenceConfidence: 0.4,
+      minTrackingConfidence: 0.4
     };
     let landmarker;
     let usedCpu = false;
@@ -616,9 +618,9 @@ function scheduleRecCpuFallback() {
         },
         runningMode: 'VIDEO',
         numHands: 2,
-        minHandDetectionConfidence: 0.5,
-        minHandPresenceConfidence: 0.5,
-        minTrackingConfidence: 0.5
+        minHandDetectionConfidence: 0.4,
+        minHandPresenceConfidence: 0.4,
+        minTrackingConfidence: 0.4
       });
       if (state.landmarker) {
         try { state.landmarker.close(); } catch (e) { /* 忽略 */ }
@@ -668,6 +670,7 @@ function handleRecResult(result) {
     state.stablePose = '';
     state.stableFrames = 0;
     state.bothLikeFrames = 0;
+    state.singleLikeFrames = 0;
     return;
   }
 
@@ -679,7 +682,7 @@ function handleRecResult(result) {
   const lm = hands[0];
   drawLandmarks(lm);
   const pose = GestureMath.classifyPose(lm);
-  setGestureLocal(pose.name, pose.detail);
+  setGestureLocal(pose.name, pose.detail + '（检测到 ' + hands.length + ' 只手）');
 
   if (pose.name === state.stablePose) {
     state.stableFrames += 1;
@@ -691,18 +694,17 @@ function handleRecResult(result) {
   const now = Date.now();
 
   // 双手同时竖大拇指 → 一键三连（稳定 3 帧 + 防抖，触发后需松手重比）
-  if (hands.length >= 2) {
-    const bothLike = hands.slice(0, 2).every((h) => GestureMath.classifyPose(h).name === '点赞');
-    if (bothLike) {
-      state.bothLikeFrames = (state.bothLikeFrames || 0) + 1;
-      setGestureLocal('双手点赞', '两只手都竖起大拇指 → 一键三连');
-      if (state.bothLikeFrames >= 3 && now - state.lastActionTime >= state.debounceMs) {
-        state.lastActionTime = now;
-        state.bothLikeFrames = 0;
-        sendAction('like3', '双手点赞');
-      }
-      return; // 双手点赞时不再执行单手动作（避免重复点赞）
+  const likeCount = hands.filter((h) => GestureMath.classifyPose(h).name === '点赞').length;
+  if (likeCount >= 2) {
+    state.bothLikeFrames = (state.bothLikeFrames || 0) + 1;
+    state.singleLikeFrames = 0; // 确认是双手，取消待定的单手点赞
+    setGestureLocal('双手点赞', '两只手都竖起大拇指（检测到 ' + hands.length + ' 只手）→ 一键三连');
+    if (state.bothLikeFrames >= 3 && now - state.lastActionTime >= state.debounceMs) {
+      state.lastActionTime = now;
+      state.bothLikeFrames = 0;
+      sendAction('like3', '双手点赞');
     }
+    return; // 双手点赞时不再执行单手动作（避免重复点赞）
   }
   state.bothLikeFrames = 0;
 
@@ -741,10 +743,17 @@ function handleRecResult(result) {
     }
   }
 
-  // 点赞（竖大拇指）：给当前视频点赞
-  if (stable && pose.name === '点赞' && now - state.lastActionTime >= state.debounceMs) {
-    state.lastActionTime = now;
-    sendAction('like', '点赞');
+  // 点赞（竖大拇指）：先观察几帧确认不是“双手点赞被漏检”，再触发单次点赞
+  if (pose.name === '点赞') {
+    state.singleLikeFrames = (state.singleLikeFrames || 0) + 1;
+    if (state.singleLikeFrames >= SINGLE_LIKE_CONFIRM_FRAMES && now - state.lastActionTime >= state.debounceMs) {
+      state.lastActionTime = now;
+      state.singleLikeFrames = 0;
+      sendAction('like', '点赞');
+    }
+  } else {
+    state.singleLikeFrames = 0;
+  }
   }
 
   // 握拳：不再触发任何动作（保留识别，避免握拳被误判成其它手势）
