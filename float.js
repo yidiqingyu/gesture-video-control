@@ -86,6 +86,7 @@ const GESTURE_EMOJI = {
   '小拇指向上': '🤙',
   '小拇指向下': '🤙',
   '食指向上': '☝️',
+  '点赞': '👍',
   '食指向下': '👇',
   '握拳': '✊',
   '手掌张开': '🖐️',
@@ -719,6 +720,12 @@ function handleRecResult(result) {
     } else {
       sendAction(pose.name === '食指向上' ? 'prev' : 'next', pose.name);
     }
+  }
+
+  // 点赞（竖大拇指）：给当前视频点赞
+  if (stable && pose.name === '点赞' && now - state.lastActionTime >= state.debounceMs) {
+    state.lastActionTime = now;
+    sendAction('like', '点赞');
   }
 
   // 握拳：不再触发任何动作（保留识别，避免握拳被误判成其它手势）

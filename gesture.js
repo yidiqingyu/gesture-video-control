@@ -122,6 +122,15 @@ const GestureMath = (() => {
       if (pinkyDown) return { name: '小拇指向下', ok: false, detail: '单个小拇指伸直朝下' };
       return { name: '其他手势', ok: false, detail: '小指伸直但方向不明' };
     }
+
+    // 点赞（竖大拇指）：拇指明显伸直，其余四指都收着（不伸直）
+    // 放最前面避免四指弯曲时被“握拳”抢走判定
+    const thumb = extensionScore(lm, 4, 3, 2);
+    const thumbUp = thumb > EXT_WEAK &&
+      idx < EXT_WEAK && mid < EXT_WEAK && ring < EXT_WEAK && pinky < EXT_WEAK &&
+      idx < thumb * 0.85 && mid < thumb * 0.85 && ring < thumb * 0.85 && pinky < thumb * 0.85;
+    if (thumbUp) return { name: '点赞', ok: false, detail: '竖大拇指点赞' };
+
     if (okPose) return { name: 'OK', ok: true, detail: '拇指+食指捏合成圈' };
     if (thumbMiddlePinch) return { name: '其他手势', ok: false, detail: '拇指+中指捏合（原打响指，已停用）' };
     if (indexUp) return { name: '食指向上', ok: false, detail: '单个食指伸直朝上' };

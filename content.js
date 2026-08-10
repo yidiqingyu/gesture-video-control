@@ -146,6 +146,40 @@
     return { status: 'ok', muted: video.muted };
   }
 
+  // 模拟按一个字符键（抖音网页版：Z = 点赞）
+  function sendCharKey(key, code, keyCode) {
+    for (const type of ['keydown', 'keyup']) {
+      const evt = new KeyboardEvent(type, {
+        key, code: code || key, bubbles: true, cancelable: true
+      });
+      Object.defineProperty(evt, 'keyCode', { get: () => keyCode });
+      Object.defineProperty(evt, 'which', { get: () => keyCode });
+      document.dispatchEvent(evt);
+    }
+  }
+
+  // 点赞：优先点站点的点赞按钮，找不到就按 Z 键（抖音等支持）
+  function likeVideo() {
+    const likeSels = [
+      '[data-e2e="feed-like"]',                              // 抖音推荐流点赞按钮
+      '[aria-label*="点赞"]',                                // B 站等中文站点
+      'button[aria-label*="like this video" i]',             // YouTube
+      'button[aria-label*="like" i]:not([aria-label*="dislike" i])', // YouTube 通用
+      '[aria-label*="赞" i]',                                // 通用中文兜底
+      '.video-like',                                         // B 站旧版
+      'button[class*="like" i]'                              // 通用兜底
+    ];
+    for (const sel of likeSels) {
+      const el = document.querySelector(sel);
+      if (el && typeof el.click === 'function') {
+        el.click();
+        return { status: 'ok' };
+      }
+    }
+    sendCharKey('z', 'KeyZ', 90);
+    return { status: 'ok' };
+  }
+
   // ---------- 切集（下一集 / 上一集）----------
   function clickBySelectors(selectors) {
     for (const sel of selectors) {
@@ -366,6 +400,7 @@
     '小拇指向下': '🤙',
     '食指向上': '☝️',
     '食指向下': '👇',
+    '点赞': '👍',
     '手掌张开': '🖐️',
     '握拳': '✊',
     '未检测到手': '🚫',
@@ -838,6 +873,11 @@
       case 'mute': {
         const r = toggleMute();
         if (r.status === 'ok') r.toast = r.muted ? '🔇 已静音' : '🔊 已取消静音';
+        return r;
+      }
+      case 'like': {
+        const r = likeVideo();
+        if (r.status === 'ok') r.toast = '👍 已点赞';
         return r;
       }
       case 'next': {

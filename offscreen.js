@@ -366,6 +366,12 @@ function onHandsResults(results) {
     }
   }
 
+  // 点赞（竖大拇指）：给当前视频点赞
+  if (stable && pose.name === '点赞' && now - state.lastActionTime >= state.debounceMs) {
+    state.lastActionTime = now;
+    triggerAction('like', '点赞');
+  }
+
   // 握拳：不再触发任何动作（保留识别，避免握拳被误判成其它手势）
 
   // 手掌张开：保持 2 秒切换长/短视频模式（上下挥动切集已移除）
