@@ -417,8 +417,19 @@
         position: relative; overflow: hidden;
       }
       .gvc-preview-wrap.hidden { display: none; }
-      .gvc-preview { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .gvc-preview {
+        width: 100%; height: 100%; object-fit: cover; display: block;
+        will-change: transform;
+      }
+      .gvc-preview-wrap.zoomed .gvc-preview { cursor: grab; }
+      .gvc-preview-wrap.dragging .gvc-preview { cursor: grabbing; }
       .gvc-placeholder { color: #9aa3af; font-size: 12px; text-align: center; padding: 0 12px; }
+      .gvc-zoom-badge {
+        position: absolute; right: 6px; bottom: 6px;
+        background: rgba(0,0,0,.55); color: #fff;
+        font-size: 11px; padding: 2px 7px; border-radius: 8px;
+        pointer-events: none;
+      }
       .gvc-body {
         flex: 1; padding: 10px 12px 12px;
         display: flex; flex-direction: column; gap: 8px;
@@ -477,9 +488,10 @@
         <button data-act="min" title="最小化">—</button>
         <button data-act="close" title="关闭悬浮面板">✕</button>
       </div>
-      <div class="gvc-preview-wrap">
+      <div class="gvc-preview-wrap" title="滚轮缩放画面，双击重置，放大后按住拖动">
         <video class="gvc-preview" autoplay muted playsinline></video>
         <div class="gvc-placeholder">正在打开摄像头预览…</div>
+        <span class="gvc-zoom-badge">1.0x</span>
       </div>
       <div class="gvc-body">
         <div class="gvc-gesture">
@@ -504,7 +516,7 @@
     panelShadow.appendChild(pill);
 
     // 位置与尺寸（记忆上次，否则默认右上角）
-    const saved = await chrome.storage.local.get(['gvcPanelPos', 'gvcPanelSize']).catch(() => ({}));
+    const saved = await chrome.storage.local.get(['gvcPanelPos', 'gvcPanelSize', 'gvcPanelZoom']).catch(() => ({}));
     const w = (saved.gvcPanelSize && saved.gvcPanelSize.width >= PANEL_MIN_W) ? saved.gvcPanelSize.width : PANEL_DEFAULT_W;
     const h = (saved.gvcPanelSize && saved.gvcPanelSize.height >= PANEL_MIN_H) ? saved.gvcPanelSize.height : PANEL_DEFAULT_H;
     let left = (saved.gvcPanelPos && typeof saved.gvcPanelPos.left === 'number') ? saved.gvcPanelPos.left : window.innerWidth - w - 20;
@@ -517,7 +529,7 @@
     root.style.top = top + 'px';
 
     panelPreview = root.querySelector('.gvc-preview');
-    initPanelInteractions(root, pill);
+    initPanelInteractions(root, pill, saved.gvcPanelZoom);
     document.documentElement.appendChild(panelHost);
     startPanelPreview();
 
@@ -542,12 +554,88 @@
   // 面板当前使用的设置（开关启动引擎时传给后台）
   let panelSettings = { volumeStep: 0.1, debounceMs: 900, volumeRepeatMs: 650 };
 
-  function initPanelInteractions(root, pill) {
+  function initPanelInteractions(root, pill, savedZoom) {
     const bar = root.querySelector('.gvc-bar');
     const resize = root.querySelector('.gvc-resize');
     const ctl = root.querySelector('[data-ctl="control"]');
     const short = root.querySelector('[data-ctl="short"]');
+    const previewWrap = root.querySelector('.gvc-preview-wrap');
+    const preview = root.querySelector('.gvc-preview');
+    const zoomBadge = root.querySelector('.gvc-zoom-badge');
+    const ZOOM_MIN = 0.5;
+    const ZOOM_MAX = 4;
+    let zoom = 1;
+    let panX = 0;
+    let panY = 0;
+    let panDrag = null;
     let drag = null;
+
+    function applyZoom() {
+      preview.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + zoom + ')';
+      previewWrap.classList.toggle('zoomed', zoom > 1.01);
+      zoomBadge.textContent = zoom.toFixed(1) + 'x';
+    }
+
+    function saveZoom() {
+      chrome.storage.local.set({ gvcPanelZoom: { zoom: zoom, panX: panX, panY: panY } }).catch(() => {});
+    }
+
+    // 恢复上次的缩放 / 平移
+    if (savedZoom && typeof savedZoom.zoom === 'number') {
+      zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, savedZoom.zoom));
+      panX = savedZoom.panX || 0;
+      panY = savedZoom.panY || 0;
+      applyZoom();
+    }
+
+    // 滚轮缩放：以鼠标位置为锚点，画面内容不跑偏
+    previewWrap.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const rect = previewWrap.getBoundingClientRect();
+      const mx = e.clientX - rect.left - rect.width / 2;
+      const my = e.clientY - rect.top - rect.height / 2;
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom * factor));
+      const ratio = next / zoom;
+      panX = mx - (mx - panX) * ratio;
+      panY = my - (my - panY) * ratio;
+      zoom = next;
+      applyZoom();
+      saveZoom();
+    }, { passive: false });
+
+    // 双击重置为 100%
+    previewWrap.addEventListener('dblclick', () => {
+      zoom = 1;
+      panX = 0;
+      panY = 0;
+      applyZoom();
+      saveZoom();
+    });
+
+    // 放大后按住画面拖动平移
+    previewWrap.addEventListener('mousedown', (e) => {
+      if (zoom <= 1.01) return;
+      panDrag = { sx: e.clientX, sy: e.clientY, px: panX, py: panY };
+      previewWrap.classList.add('dragging');
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!panDrag) return;
+      const rect = previewWrap.getBoundingClientRect();
+      const maxX = ((zoom - 1) * rect.width) / 2;
+      const maxY = ((zoom - 1) * rect.height) / 2;
+      panX = Math.max(-maxX, Math.min(maxX, panDrag.px + (e.clientX - panDrag.sx)));
+      panY = Math.max(-maxY, Math.min(maxY, panDrag.py + (e.clientY - panDrag.sy)));
+      applyZoom();
+    });
+    document.addEventListener('mouseup', () => {
+      if (panDrag) {
+        panDrag = null;
+        previewWrap.classList.remove('dragging');
+        saveZoom();
+      }
+    });
 
     bar.addEventListener('mousedown', (e) => {
       if (e.target.closest('button')) return;
