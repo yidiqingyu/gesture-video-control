@@ -158,6 +158,40 @@
     }
   }
 
+  // 长按键盘键：keydown → 保持 ms 毫秒 → keyup（B 站长按 R = 一键三连）
+  function holdCharKey(key, code, keyCode, ms) {
+    const make = (type) => {
+      const evt = new KeyboardEvent(type, {
+        key, code: code || key, bubbles: true, cancelable: true
+      });
+      Object.defineProperty(evt, 'keyCode', { get: () => keyCode });
+      Object.defineProperty(evt, 'which', { get: () => keyCode });
+      return evt;
+    };
+    document.dispatchEvent(make('keydown'));
+    setTimeout(() => document.dispatchEvent(make('keyup')), ms);
+  }
+
+  // 按住元素约 ms 毫秒再松开（B 站长按点赞按钮 = 一键三连）
+  function holdAndRelease(el, ms) {
+    const rect = el.getBoundingClientRect();
+    const common = {
+      bubbles: true, cancelable: true, composed: true,
+      button: 0, buttons: 1,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2
+    };
+    try { el.dispatchEvent(new PointerEvent('pointerdown', common)); } catch (e) { /* 忽略 */ }
+    el.dispatchEvent(new MouseEvent('mousedown', common));
+    setTimeout(() => {
+      if (!el.isConnected) return;
+      const up = Object.assign({}, common, { buttons: 0 });
+      try { el.dispatchEvent(new PointerEvent('pointerup', up)); } catch (e) { /* 忽略 */ }
+      el.dispatchEvent(new MouseEvent('mouseup', up));
+      if (typeof el.click === 'function') el.click();
+    }, ms);
+  }
+
   // 点赞：优先点站点的点赞按钮，找不到就按 Z 键（抖音等支持）
   function likeVideo() {
     const likeSels = [
@@ -186,17 +220,16 @@
 
     // 1) B 站网页版：按住点赞按钮约 2 秒松开 = 一键三连
     if (isBili) {
-      const likeBtn = document.querySelector('[aria-label*="点赞"], [aria-label*="赞" i]');
+      // B 站新版点赞按钮是 div.video-like，title 为“点赞（Q）”，没有 aria-label
+      const likeBtn = document.querySelector(
+        '.video-toolbar-left-item.video-like, .video-like, [title*="点赞"], [aria-label*="点赞"], [aria-label*="赞" i]'
+      );
       if (likeBtn && typeof likeBtn.dispatchEvent === 'function') {
-        likeBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-        setTimeout(() => {
-          likeBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
-          likeBtn.click();
-        }, 2200);
+        holdAndRelease(likeBtn, 2200);
         return { status: 'ok' };
       }
-      // 2) B 站快捷键：R 可触发一键三连
-      sendCharKey('r', 'KeyR', 82);
+      // 2) B 站快捷键：长按 R 可触发一键三连
+      holdCharKey('r', 'KeyR', 82, 2200);
       return { status: 'ok' };
     }
 
