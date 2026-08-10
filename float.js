@@ -63,6 +63,7 @@ const state = {
   lastVolumeTime: 0,
   stablePose: '',
   stableFrames: 0,
+  bothLikeFrames: 0,      // 双手同时点赞的连续帧数（一键三连用）
   okPinched: false,      // OK 手势捏合跳变检测
   handFoundFrames: 0,    // 连续检测到手的帧数（显示防抖用）
   handLostFrames: 0,     // 连续没检测到手的帧数（显示防抖用）
@@ -87,6 +88,7 @@ const GESTURE_EMOJI = {
   '小拇指向下': '🤙',
   '食指向上': '☝️',
   '点赞': '👍',
+  '双手点赞': '👍👍',
   '食指向下': '👇',
   '握拳': '✊',
   '手掌张开': '🖐️',
@@ -665,6 +667,7 @@ function handleRecResult(result) {
     state.palmHoldTriggered = false;
     state.stablePose = '';
     state.stableFrames = 0;
+    state.bothLikeFrames = 0;
     return;
   }
 
@@ -686,6 +689,22 @@ function handleRecResult(result) {
   }
   const stable = state.stableFrames >= 3;
   const now = Date.now();
+
+  // 双手同时竖大拇指 → 一键三连（稳定 3 帧 + 防抖，触发后需松手重比）
+  if (hands.length >= 2) {
+    const bothLike = hands.slice(0, 2).every((h) => GestureMath.classifyPose(h).name === '点赞');
+    if (bothLike) {
+      state.bothLikeFrames = (state.bothLikeFrames || 0) + 1;
+      setGestureLocal('双手点赞', '两只手都竖起大拇指 → 一键三连');
+      if (state.bothLikeFrames >= 3 && now - state.lastActionTime >= state.debounceMs) {
+        state.lastActionTime = now;
+        state.bothLikeFrames = 0;
+        sendAction('like3', '双手点赞');
+      }
+      return; // 双手点赞时不再执行单手动作（避免重复点赞）
+    }
+  }
+  state.bothLikeFrames = 0;
 
   // OK：捏合跳变触发播放/暂停
   if (pose.ok) {

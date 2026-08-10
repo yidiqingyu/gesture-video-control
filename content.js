@@ -180,6 +180,40 @@
     return { status: 'ok' };
   }
 
+  // 一键三连（B 站）：长按点赞按钮 → 快捷键 R → 找不到就退化为点赞
+  function tripleLike() {
+    const isBili = location.hostname.includes('bilibili.com');
+
+    // 1) B 站网页版：按住点赞按钮约 2 秒松开 = 一键三连
+    if (isBili) {
+      const likeBtn = document.querySelector('[aria-label*="点赞"], [aria-label*="赞" i]');
+      if (likeBtn && typeof likeBtn.dispatchEvent === 'function') {
+        likeBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+        setTimeout(() => {
+          likeBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+          likeBtn.click();
+        }, 2200);
+        return { status: 'ok' };
+      }
+      // 2) B 站快捷键：R 可触发一键三连
+      sendCharKey('r', 'KeyR', 82);
+      return { status: 'ok' };
+    }
+
+    // 3) 其它站点：找“三连”按钮，找不到退化为点赞
+    const tripleSels = [
+      '[aria-label*="三连"]', '[title*="三连"]', '[aria-label*="triple" i]'
+    ];
+    for (const sel of tripleSels) {
+      const el = document.querySelector(sel);
+      if (el && typeof el.click === 'function') {
+        el.click();
+        return { status: 'ok' };
+      }
+    }
+    return likeVideo();
+  }
+
   // ---------- 切集（下一集 / 上一集）----------
   function clickBySelectors(selectors) {
     for (const sel of selectors) {
@@ -401,6 +435,7 @@
     '食指向上': '☝️',
     '食指向下': '👇',
     '点赞': '👍',
+    '双手点赞': '👍👍',
     '手掌张开': '🖐️',
     '握拳': '✊',
     '未检测到手': '🚫',
@@ -878,6 +913,11 @@
       case 'like': {
         const r = likeVideo();
         if (r.status === 'ok') r.toast = '👍 已点赞';
+        return r;
+      }
+      case 'like3': {
+        const r = tripleLike();
+        if (r.status === 'ok') r.toast = '🔥 一键三连';
         return r;
       }
       case 'next': {
