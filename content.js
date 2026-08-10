@@ -430,6 +430,20 @@
         font-size: 11px; padding: 2px 7px; border-radius: 8px;
         pointer-events: none;
       }
+      .gvc-preview-resize {
+        position: absolute; left: 0; right: 0; bottom: 0;
+        height: 10px; cursor: ns-resize;
+        background: rgba(255,255,255,.06);
+        transition: background .15s ease;
+        z-index: 2;
+      }
+      .gvc-preview-resize:hover { background: rgba(22,93,255,.45); }
+      .gvc-preview-resize::after {
+        content: ''; position: absolute; left: 50%; top: 50%;
+        transform: translate(-50%,-50%);
+        width: 28px; height: 3px; border-radius: 2px;
+        background: rgba(255,255,255,.45);
+      }
       .gvc-body {
         flex: 1; padding: 10px 12px 12px;
         display: flex; flex-direction: column; gap: 8px;
@@ -492,6 +506,7 @@
         <video class="gvc-preview" autoplay muted playsinline></video>
         <div class="gvc-placeholder">正在打开摄像头预览…</div>
         <span class="gvc-zoom-badge">1.0x</span>
+        <div class="gvc-preview-resize" title="拖动调整画面大小"></div>
       </div>
       <div class="gvc-body">
         <div class="gvc-gesture">
@@ -516,7 +531,7 @@
     panelShadow.appendChild(pill);
 
     // 位置与尺寸（记忆上次，否则默认右上角）
-    const saved = await chrome.storage.local.get(['gvcPanelPos', 'gvcPanelSize', 'gvcPanelZoom']).catch(() => ({}));
+    const saved = await chrome.storage.local.get(['gvcPanelPos', 'gvcPanelSize', 'gvcPanelZoom', 'gvcPanelPreviewH']).catch(() => ({}));
     const w = (saved.gvcPanelSize && saved.gvcPanelSize.width >= PANEL_MIN_W) ? saved.gvcPanelSize.width : PANEL_DEFAULT_W;
     const h = (saved.gvcPanelSize && saved.gvcPanelSize.height >= PANEL_MIN_H) ? saved.gvcPanelSize.height : PANEL_DEFAULT_H;
     let left = (saved.gvcPanelPos && typeof saved.gvcPanelPos.left === 'number') ? saved.gvcPanelPos.left : window.innerWidth - w - 20;
@@ -527,6 +542,9 @@
     root.style.height = h + 'px';
     root.style.left = left + 'px';
     root.style.top = top + 'px';
+    // 恢复上次的画面高度（90 ~ 320px，默认 170px）
+    const ph = (typeof saved.gvcPanelPreviewH === 'number') ? saved.gvcPanelPreviewH : 170;
+    root.querySelector('.gvc-preview-wrap').style.height = Math.max(90, Math.min(320, ph)) + 'px';
 
     panelPreview = root.querySelector('.gvc-preview');
     initPanelInteractions(root, pill, saved.gvcPanelZoom);
@@ -562,6 +580,7 @@
     const previewWrap = root.querySelector('.gvc-preview-wrap');
     const preview = root.querySelector('.gvc-preview');
     const zoomBadge = root.querySelector('.gvc-zoom-badge');
+    const previewResize = root.querySelector('.gvc-preview-resize');
     const ZOOM_MIN = 0.5;
     const ZOOM_MAX = 4;
     let zoom = 1;
@@ -569,6 +588,24 @@
     let panY = 0;
     let panDrag = null;
     let drag = null;
+
+    // 拖动底部分隔条：调整摄像头画面大小（90 ~ 320px，自动记忆）
+    previewResize.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startY = e.clientY;
+      const startH = previewWrap.offsetHeight;
+      const onMove = (ev) => {
+        previewWrap.style.height = Math.max(90, Math.min(320, startH + (ev.clientY - startY))) + 'px';
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        chrome.storage.local.set({ gvcPanelPreviewH: previewWrap.offsetHeight }).catch(() => {});
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
 
     function applyZoom() {
       preview.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + zoom + ')';

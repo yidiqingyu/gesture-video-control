@@ -20,6 +20,11 @@ body {
   padding: 14px 14px 12px;
 }
 
+body.resizing {
+  cursor: ns-resize;
+  user-select: none;
+}
+
 /* ---------- 顶部标题 ---------- */
 .header {
   display: flex;
@@ -47,11 +52,38 @@ h1 {
 .camera-wrap {
   position: relative;
   width: 100%;
-  aspect-ratio: 4 / 3;
+  height: 180px;
   background: #0a1018;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid #24324a;
+}
+
+.camera-resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 10px;
+  cursor: ns-resize;
+  background: rgba(255, 255, 255, 0.06);
+  transition: background 0.15s ease;
+}
+
+.camera-resize:hover {
+  background: rgba(22, 93, 255, 0.45);
+}
+
+.camera-resize::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 28px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.45);
 }
 
 #preview {

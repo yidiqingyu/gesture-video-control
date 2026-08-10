@@ -18,6 +18,8 @@
 const els = {
   preview: document.getElementById('preview'),
   cameraPlaceholder: document.getElementById('camera-placeholder'),
+  cameraWrap: document.querySelector('.camera-wrap'),
+  cameraResize: document.getElementById('camera-resize'),
   grantButton: document.getElementById('grant-button'),
   openFloat: document.getElementById('open-float'),
   gestureEmoji: document.getElementById('gesture-emoji'),
@@ -68,6 +70,16 @@ function init() {
   }
   if (els.openFloat) {
     els.openFloat.addEventListener('click', onOpenFloat);
+  }
+  if (els.cameraResize && els.cameraWrap) {
+    els.cameraResize.addEventListener('mousedown', onCameraResizeDown);
+    // 恢复上次拖出来的画面大小
+    chrome.storage.local.get('gvcCamPreviewH', (s) => {
+      const h = s.gvcCamPreviewH;
+      if (typeof h === 'number' && h >= 100 && h <= 320) {
+        els.cameraWrap.style.height = h + 'px';
+      }
+    });
   }
   chrome.runtime.onMessage.addListener(onRuntimeMessage);
   // 悬浮窗页面引擎的归属变化时，同步状态显示（避免后台引擎重复启动）
@@ -365,6 +377,26 @@ function onGrantClick() {
   const url = chrome.runtime.getURL('grant.html' + (tabId ? '?tab=' + encodeURIComponent(tabId) : ''));
   chrome.tabs.create({ url: url, active: true });
   window.close();
+}
+
+// 拖动分隔条调整摄像头画面大小（100 ~ 320px，自动记忆）
+function onCameraResizeDown(e) {
+  const startY = e.clientY;
+  const startH = els.cameraWrap.offsetHeight;
+  const onMove = (ev) => {
+    const h = Math.max(100, Math.min(320, startH + (ev.clientY - startY)));
+    els.cameraWrap.style.height = h + 'px';
+  };
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.body.classList.remove('resizing');
+    chrome.storage.local.set({ gvcCamPreviewH: els.cameraWrap.offsetHeight }).catch(() => {});
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+  document.body.classList.add('resizing');
+  e.preventDefault();
 }
 
 // 打开悬浮面板：在当前页面注入可拖动 / 缩放 / 隐藏画面的悬浮面板
