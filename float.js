@@ -197,7 +197,7 @@ async function onShortToggleChange() {
   setModelStatus(state.shortVideoMode ? '已切换到短视频模式（食指上=下滑，食指下=上滑）' : '已切回长视频模式');
 }
 
-// 电话手势保持 2 秒：锁定 / 解锁引擎
+// 666 手势保持 1.5 秒锁定 / 解锁
 function togglePhoneLock() {
   const next = !state.phoneLocked;
   state.phoneLocked = next;
@@ -700,7 +700,7 @@ function handleRecResult(result) {
   drawLandmarks(lm);
   const pose = GestureMath.classifyPose(lm);
   if (state.phoneLocked && pose.name !== '666') {
-    setGestureLocal('🔒 已锁定', '手势操作已暂停，比出 666 手势保持 2 秒解锁');
+  setGestureLocal('🔒 已锁定', '手势操作已暂停，比出 666 手势保持 1.5 秒解锁');
   } else {
     setGestureLocal(pose.name, pose.detail + '（检测到 ' + hands.length + ' 只手）');
   }
@@ -714,12 +714,12 @@ function handleRecResult(result) {
   const stable = state.stableFrames >= 3;
   const now = Date.now();
 
-  // 电话手势：保持 2 秒锁定 / 解锁引擎（锁定期间其它手势一律不执行操作）
+  // 666 手势：保持 1.5 秒锁定 / 解锁（锁定期间其它手势一律不执行操作）
   if (pose.name === '666') {
     if (state.phoneHoldStart === null) {
       state.phoneHoldStart = now;
-      setGestureLocal('666', '保持 666 手势 2 秒' + (state.phoneLocked ? '解锁' : '锁定') + '…');
-    } else if (!state.phoneHoldTriggered && now - state.phoneHoldStart >= 2000) {
+      setGestureLocal('666', '保持 666 手势 1.5 秒' + (state.phoneLocked ? '解锁' : '锁定') + '…');
+    } else if (!state.phoneHoldTriggered && now - state.phoneHoldStart >= 1500) {
       state.phoneHoldTriggered = true;
       togglePhoneLock();
     }

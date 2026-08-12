@@ -331,7 +331,7 @@ function onHandsResults(results) {
     notify();
   }
   if (state.phoneLocked && pose.name !== '666') {
-    setGesture('🔒 已锁定', '手势操作已暂停，比出 666 手势保持 2 秒解锁');
+    setGesture('🔒 已锁定', '手势操作已暂停，比出 666 手势保持 1.5 秒解锁');
   } else {
     setGesture(pose.name, pose.detail + '（检测到 ' + hands.length + ' 只手）');
   }
@@ -345,12 +345,12 @@ function onHandsResults(results) {
   const stable = state.stableFrames >= 3;
   const now = Date.now();
 
-  // 电话手势：保持 2 秒锁定 / 解锁引擎（锁定期间其它手势一律不执行操作）
+  // 666 手势：保持 1.5 秒锁定 / 解锁（锁定期间其它手势一律不执行操作）
   if (pose.name === '666') {
     if (state.phoneHoldStart === null) {
       state.phoneHoldStart = now;
-      setGesture('666', '保持 666 手势 2 秒' + (state.phoneLocked ? '解锁' : '锁定') + '…');
-    } else if (!state.phoneHoldTriggered && now - state.phoneHoldStart >= 2000) {
+      setGesture('666', '保持 666 手势 1.5 秒' + (state.phoneLocked ? '解锁' : '锁定') + '…');
+    } else if (!state.phoneHoldTriggered && now - state.phoneHoldStart >= 1500) {
       state.phoneHoldTriggered = true;
       togglePhoneLock();
     }
@@ -457,7 +457,7 @@ async function toggleShortVideoMode() {
   notify();
 }
 
-// 电话手势保持 2 秒：锁定 / 解锁引擎
+// 666 手势保持 1.5 秒锁定 / 解锁
 function togglePhoneLock() {
   const next = !state.phoneLocked;
   state.phoneLocked = next;
