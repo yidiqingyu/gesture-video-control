@@ -99,6 +99,16 @@ const GestureMath = (() => {
     const indexUp = indexSolo && lm[8].y < lm[6].y - 0.015;
     const indexDown = indexSolo && lm[8].y > lm[6].y + 0.015;
 
+    // 电话（打电话）：拇指 + 小指伸直，中间三指（食/中/无名）收着。
+    // 必须放在“小拇指”和“点赞”判定之前，否则会被它们抢走
+    //（电话手势也满足“小指伸直、其余三指未伸直”）。
+    const thumb = extensionScore(lm, 4, 3, 2);
+    const phonePose = thumb > EXT_WEAK && pinky > EXT_WEAK &&
+      idx < EXT_WEAK && mid < EXT_WEAK && ring < EXT_WEAK &&
+      thumb > idx * 0.9 && thumb > mid * 0.9 && thumb > ring * 0.9 &&
+      pinky > idx * 0.9 && pinky > mid * 0.9 && pinky > ring * 0.9;
+    if (phonePose) return { name: '电话', ok: false, detail: '拇指+小指伸直（打电话）' };
+
     // 单个小拇指：小指伸直，其余三指都收着。
     // 判定放宽：允许食指/中指/无名指只是“半弯”（不要求完全弯曲），
     // 只要它们都没伸直、且明显不如小指伸得开，就算小拇指。
@@ -125,7 +135,6 @@ const GestureMath = (() => {
 
     // 点赞（竖大拇指）：拇指明显伸直，其余四指都收着（不伸直）
     // 放最前面避免四指弯曲时被“握拳”抢走判定
-    const thumb = extensionScore(lm, 4, 3, 2);
     const thumbUp = thumb > EXT_WEAK &&
       idx < EXT_WEAK && mid < EXT_WEAK && ring < EXT_WEAK && pinky < EXT_WEAK &&
       idx < thumb * 0.85 && mid < thumb * 0.85 && ring < thumb * 0.85 && pinky < thumb * 0.85;

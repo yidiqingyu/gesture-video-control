@@ -70,7 +70,10 @@ const state = {
   handLostFrames: 0,     // 连续没检测到手的帧数（显示防抖用）
   shortVideoMode: false, // 短视频模式（默认长视频模式）
   palmHoldStart: null,   // 手掌张开保持计时的起点
-  palmHoldTriggered: false // 本次保持是否已触发过模式切换
+  palmHoldTriggered: false, // 本次保持是否已触发过模式切换
+  phoneLocked: false,    // 电话手势锁定：锁定后不执行任何手势操作
+  phoneHoldStart: null,  // 电话手势保持计时的起点
+  phoneHoldTriggered: false // 本次保持是否已触发过锁定/解锁
 };
 
 // 显示防抖：身体晃动造成的“疑似手”会一闪而过。
@@ -94,6 +97,8 @@ const GESTURE_EMOJI = {
   '食指向下': '👇',
   '握拳': '✊',
   '手掌张开': '🖐️',
+  '电话': '📞',
+  '🔒 已锁定': '🔒',
   '其他手势': '🫱',
   '未检测到手': '🙈',
   '等待识别…': '🖐️'
@@ -190,6 +195,14 @@ async function onShortToggleChange() {
   state.shortVideoMode = !!els.shortToggle.checked;
   await chrome.storage.local.set({ shortVideoMode: state.shortVideoMode });
   setModelStatus(state.shortVideoMode ? '已切换到短视频模式（食指上=下滑，食指下=上滑）' : '已切回长视频模式');
+}
+
+// 电话手势保持 2 秒：锁定 / 解锁引擎
+function togglePhoneLock() {
+  const next = !state.phoneLocked;
+  state.phoneLocked = next;
+  setGestureLocal('电话', next ? '🔒 已锁定：手势操作已暂停，再比一次电话手势解锁' : '🔓 已解锁：手势操作已恢复');
+  setModelStatus(next ? '🔒 已锁定（电话手势解锁）' : '🔓 已解锁');
 }
 
 // ============================================================
@@ -667,6 +680,8 @@ function handleRecResult(result) {
     state.okPinched = false;
     state.palmHoldStart = null;
     state.palmHoldTriggered = false;
+    state.phoneHoldStart = null;
+    state.phoneHoldTriggered = false;
     state.stablePose = '';
     state.stableFrames = 0;
     state.bothLikeFrames = 0;
@@ -682,7 +697,11 @@ function handleRecResult(result) {
   const lm = hands[0];
   drawLandmarks(lm);
   const pose = GestureMath.classifyPose(lm);
-  setGestureLocal(pose.name, pose.detail + '（检测到 ' + hands.length + ' 只手）');
+  if (state.phoneLocked && pose.name !== '电话') {
+    setGestureLocal('🔒 已锁定', '手势操作已暂停，比出电话手势保持 2 秒解锁');
+  } else {
+    setGestureLocal(pose.name, pose.detail + '（检测到 ' + hands.length + ' 只手）');
+  }
 
   if (pose.name === state.stablePose) {
     state.stableFrames += 1;
@@ -692,6 +711,29 @@ function handleRecResult(result) {
   }
   const stable = state.stableFrames >= 3;
   const now = Date.now();
+
+  // 电话手势：保持 2 秒锁定 / 解锁引擎（锁定期间其它手势一律不执行操作）
+  if (pose.name === '电话') {
+    if (state.phoneHoldStart === null) {
+      state.phoneHoldStart = now;
+      setGestureLocal('电话', '保持电话手势 2 秒' + (state.phoneLocked ? '解锁' : '锁定') + '…');
+    } else if (!state.phoneHoldTriggered && now - state.phoneHoldStart >= 2000) {
+      state.phoneHoldTriggered = true;
+      togglePhoneLock();
+    }
+    return; // 电话手势本身不执行任何页面操作
+  }
+  state.phoneHoldStart = null;
+  state.phoneHoldTriggered = false;
+
+  // 已锁定：除电话手势外，其它手势一律不执行操作，并清掉残留触发状态
+  if (state.phoneLocked) {
+    state.okPinched = false;
+    state.bothLikeFrames = 0;
+    state.singleLikeFrames = 0;
+    state.lastVolumeTime = 0;
+    return;
+  }
 
   // 双手同时竖大拇指 → 一键三连（稳定 3 帧 + 防抖，触发后需松手重比）
   const likeCount = hands.filter((h) => GestureMath.classifyPose(h).name === '点赞').length;
