@@ -107,12 +107,15 @@ const GestureMath = (() => {
     //   1) 拇指、小指都“明显伸直”（> EXT_STRONG，而不是刚过 1.25）；
     //   2) 拇指伸度不能远低于小指（小拇指手势时拇指远弱于小指）；
     //   3) 中间三指未伸直，且明显弱于拇指和小指。
+    //   4) 小指尖朝上——小拇指向下时手是倒的，小指明确朝下，
+    //      且拇指也会跟着自然伸直，仅靠伸度无法和电话区分，必须看方向。
     const thumb = extensionScore(lm, 4, 3, 2);
     const phonePose = thumb > EXT_STRONG && pinky > EXT_STRONG &&
       idx < EXT_WEAK && mid < EXT_WEAK && ring < EXT_WEAK &&
       thumb >= pinky * 0.7 &&
       idx < thumb * 0.8 && mid < thumb * 0.8 && ring < thumb * 0.8 &&
-      idx < pinky * 0.8 && mid < pinky * 0.8 && ring < pinky * 0.8;
+      idx < pinky * 0.8 && mid < pinky * 0.8 && ring < pinky * 0.8 &&
+      lm[20].y < lm[17].y - 0.008;
     if (phonePose) return { name: '电话', ok: false, detail: '拇指+小指伸直（打电话）' };
 
     // 单个小拇指：小指伸直，其余三指都收着。
