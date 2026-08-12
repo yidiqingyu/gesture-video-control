@@ -463,6 +463,8 @@ function togglePhoneLock() {
   state.phoneLocked = next;
   setGesture('666', next ? '🔒 已锁定：手势操作已暂停，再比一次 666 手势解锁' : '🔓 已解锁：手势操作已恢复');
   notify();
+  // 通知当前页面显示锁定 / 解锁浮层提示
+  triggerAction(next ? 'lock' : 'unlock', '666');
 }
 
 function setGesture(name, detail) {

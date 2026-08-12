@@ -203,6 +203,8 @@ function togglePhoneLock() {
   state.phoneLocked = next;
   setGestureLocal('666', next ? '🔒 已锁定：手势操作已暂停，再比一次 666 手势解锁' : '🔓 已解锁：手势操作已恢复');
   setModelStatus(next ? '🔒 已锁定（666 手势解锁）' : '🔓 已解锁');
+  // 通知当前页面显示锁定 / 解锁浮层提示
+  sendAction(next ? 'lock' : 'unlock', '666');
 }
 
 // ============================================================

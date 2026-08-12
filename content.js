@@ -413,7 +413,7 @@
   let toastBox = null;
   let toastTimer = null;
 
-  function showToast(text) {
+  function showToast(text, duration) {
     if (!toastHost) {
       toastHost = document.createElement('div');
       toastHost.id = 'gesture-video-control-toast-host';
@@ -450,7 +450,7 @@
     toastTimer = setTimeout(() => {
       toastBox.style.opacity = '0';
       toastBox.style.transform = 'translateY(-8px)';
-    }, TOAST_DURATION);
+    }, duration || TOAST_DURATION);
   }
 
   // ============================================================
@@ -955,6 +955,17 @@
         if (r.status === 'ok') r.toast = '🔥 一键三连';
         return r;
       }
+      case 'lock':
+      case 'unlock': {
+        // 引擎本地锁定/解锁：不操作页面，只返回浮层提示（显示 2.5 秒）
+        return {
+          status: 'ok',
+          toastDuration: 2500,
+          toast: action === 'lock'
+            ? '🔒 已锁定：手势操作已暂停（再比 666 手势 2 秒解锁）'
+            : '🔓 已解锁：手势操作已恢复'
+        };
+      }
       case 'next': {
         const r = nextVideo();
         if (r.status === 'ok') r.toast = '⏭ 下一集';
@@ -1002,7 +1013,7 @@
           const result = await handleGestureAction(message);
           // 页面提示浮层反馈
           if (result.status === 'ok') {
-            showToast(result.toast || message.gesture || '已执行');
+            showToast(result.toast || message.gesture || '已执行', result.toastDuration);
           } else if (result.status === 'no_video') {
             showToast('当前页面未检测到视频');
           }
