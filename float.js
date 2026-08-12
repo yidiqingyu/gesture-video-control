@@ -97,7 +97,7 @@ const GESTURE_EMOJI = {
   '食指向下': '👇',
   '握拳': '✊',
   '手掌张开': '🖐️',
-  '电话': '📞',
+  '666': '6️⃣6️⃣6️⃣',
   '🔒 已锁定': '🔒',
   '其他手势': '🫱',
   '未检测到手': '🙈',
@@ -201,8 +201,8 @@ async function onShortToggleChange() {
 function togglePhoneLock() {
   const next = !state.phoneLocked;
   state.phoneLocked = next;
-  setGestureLocal('电话', next ? '🔒 已锁定：手势操作已暂停，再比一次电话手势解锁' : '🔓 已解锁：手势操作已恢复');
-  setModelStatus(next ? '🔒 已锁定（电话手势解锁）' : '🔓 已解锁');
+  setGestureLocal('666', next ? '🔒 已锁定：手势操作已暂停，再比一次 666 手势解锁' : '🔓 已解锁：手势操作已恢复');
+  setModelStatus(next ? '🔒 已锁定（666 手势解锁）' : '🔓 已解锁');
 }
 
 // ============================================================
@@ -697,8 +697,8 @@ function handleRecResult(result) {
   const lm = hands[0];
   drawLandmarks(lm);
   const pose = GestureMath.classifyPose(lm);
-  if (state.phoneLocked && pose.name !== '电话') {
-    setGestureLocal('🔒 已锁定', '手势操作已暂停，比出电话手势保持 2 秒解锁');
+  if (state.phoneLocked && pose.name !== '666') {
+    setGestureLocal('🔒 已锁定', '手势操作已暂停，比出 666 手势保持 2 秒解锁');
   } else {
     setGestureLocal(pose.name, pose.detail + '（检测到 ' + hands.length + ' 只手）');
   }
@@ -713,10 +713,10 @@ function handleRecResult(result) {
   const now = Date.now();
 
   // 电话手势：保持 2 秒锁定 / 解锁引擎（锁定期间其它手势一律不执行操作）
-  if (pose.name === '电话') {
+  if (pose.name === '666') {
     if (state.phoneHoldStart === null) {
       state.phoneHoldStart = now;
-      setGestureLocal('电话', '保持电话手势 2 秒' + (state.phoneLocked ? '解锁' : '锁定') + '…');
+      setGestureLocal('666', '保持 666 手势 2 秒' + (state.phoneLocked ? '解锁' : '锁定') + '…');
     } else if (!state.phoneHoldTriggered && now - state.phoneHoldStart >= 2000) {
       state.phoneHoldTriggered = true;
       togglePhoneLock();

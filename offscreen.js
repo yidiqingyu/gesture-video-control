@@ -330,8 +330,8 @@ function onHandsResults(results) {
     }
     notify();
   }
-  if (state.phoneLocked && pose.name !== '电话') {
-    setGesture('🔒 已锁定', '手势操作已暂停，比出电话手势保持 2 秒解锁');
+  if (state.phoneLocked && pose.name !== '666') {
+    setGesture('🔒 已锁定', '手势操作已暂停，比出 666 手势保持 2 秒解锁');
   } else {
     setGesture(pose.name, pose.detail + '（检测到 ' + hands.length + ' 只手）');
   }
@@ -346,10 +346,10 @@ function onHandsResults(results) {
   const now = Date.now();
 
   // 电话手势：保持 2 秒锁定 / 解锁引擎（锁定期间其它手势一律不执行操作）
-  if (pose.name === '电话') {
+  if (pose.name === '666') {
     if (state.phoneHoldStart === null) {
       state.phoneHoldStart = now;
-      setGesture('电话', '保持电话手势 2 秒' + (state.phoneLocked ? '解锁' : '锁定') + '…');
+      setGesture('666', '保持 666 手势 2 秒' + (state.phoneLocked ? '解锁' : '锁定') + '…');
     } else if (!state.phoneHoldTriggered && now - state.phoneHoldStart >= 2000) {
       state.phoneHoldTriggered = true;
       togglePhoneLock();
@@ -461,7 +461,7 @@ async function toggleShortVideoMode() {
 function togglePhoneLock() {
   const next = !state.phoneLocked;
   state.phoneLocked = next;
-  setGesture('电话', next ? '🔒 已锁定：手势操作已暂停，再比一次电话手势解锁' : '🔓 已解锁：手势操作已恢复');
+  setGesture('666', next ? '🔒 已锁定：手势操作已暂停，再比一次 666 手势解锁' : '🔓 已解锁：手势操作已恢复');
   notify();
 }
 

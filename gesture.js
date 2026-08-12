@@ -116,7 +116,7 @@ const GestureMath = (() => {
       idx < thumb * 0.8 && mid < thumb * 0.8 && ring < thumb * 0.8 &&
       idx < pinky * 0.8 && mid < pinky * 0.8 && ring < pinky * 0.8 &&
       lm[20].y < lm[17].y - 0.008;
-    if (phonePose) return { name: '电话', ok: false, detail: '拇指+小指伸直（打电话）' };
+    if (phonePose) return { name: '666', ok: false, detail: '666 手势：拇指+小指伸直' };
 
     // 单个小拇指：小指伸直，其余三指都收着。
     // 判定放宽：允许食指/中指/无名指只是“半弯”（不要求完全弯曲），
