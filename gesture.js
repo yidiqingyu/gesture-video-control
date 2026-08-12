@@ -102,11 +102,17 @@ const GestureMath = (() => {
     // 电话（打电话）：拇指 + 小指伸直，中间三指（食/中/无名）收着。
     // 必须放在“小拇指”和“点赞”判定之前，否则会被它们抢走
     //（电话手势也满足“小指伸直、其余三指未伸直”）。
+    // 判定刻意收紧，防止“小拇指上/下”误判成电话：
+    // 做小拇指手势时拇指常会不自觉半伸，因此要求——
+    //   1) 拇指、小指都“明显伸直”（> EXT_STRONG，而不是刚过 1.25）；
+    //   2) 拇指伸度不能远低于小指（小拇指手势时拇指远弱于小指）；
+    //   3) 中间三指未伸直，且明显弱于拇指和小指。
     const thumb = extensionScore(lm, 4, 3, 2);
-    const phonePose = thumb > EXT_WEAK && pinky > EXT_WEAK &&
+    const phonePose = thumb > EXT_STRONG && pinky > EXT_STRONG &&
       idx < EXT_WEAK && mid < EXT_WEAK && ring < EXT_WEAK &&
-      thumb > idx * 0.9 && thumb > mid * 0.9 && thumb > ring * 0.9 &&
-      pinky > idx * 0.9 && pinky > mid * 0.9 && pinky > ring * 0.9;
+      thumb >= pinky * 0.7 &&
+      idx < thumb * 0.8 && mid < thumb * 0.8 && ring < thumb * 0.8 &&
+      idx < pinky * 0.8 && mid < pinky * 0.8 && ring < pinky * 0.8;
     if (phonePose) return { name: '电话', ok: false, detail: '拇指+小指伸直（打电话）' };
 
     // 单个小拇指：小指伸直，其余三指都收着。
