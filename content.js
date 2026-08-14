@@ -192,25 +192,6 @@
     }, ms);
   }
 
-  // 完整模拟一次鼠标单击：pointerdown → mousedown → pointerup → mouseup → click。
-  // 部分站点（如 B 站 Vue 组件）只监听 click 或只在 pointerdown 时响应，
-  // 单纯 el.click() 不生效，需要带上坐标的完整事件序列。
-  function clickElement(el) {
-    const rect = el.getBoundingClientRect();
-    const common = {
-      bubbles: true, cancelable: true, composed: true,
-      button: 0, buttons: 1,
-      clientX: rect.left + rect.width / 2,
-      clientY: rect.top + rect.height / 2
-    };
-    try { el.dispatchEvent(new PointerEvent('pointerdown', common)); } catch (e) { /* 忽略 */ }
-    el.dispatchEvent(new MouseEvent('mousedown', common));
-    const up = Object.assign({}, common, { buttons: 0 });
-    try { el.dispatchEvent(new PointerEvent('pointerup', up)); } catch (e) { /* 忽略 */ }
-    el.dispatchEvent(new MouseEvent('mouseup', up));
-    if (typeof el.click === 'function') el.click();
-  }
-
   // 点赞：优先点站点的点赞按钮，找不到就按 Z 键（抖音等支持）
   function likeVideo() {
     const likeSels = [
@@ -992,7 +973,15 @@
         const rollBtns = document.querySelectorAll('button.roll-btn, [class*="roll-btn"]');
         for (const btn of rollBtns) {
           if (btn.textContent && btn.textContent.indexOf('换一换') !== -1) {
-            clickElement(btn);
+            // B 站“换一换”只响应真实鼠标事件（isTrusted），合成事件无效。
+            // 滚动到按钮、取中心坐标，交给后台用 CDP 原生点击。
+            btn.scrollIntoView({ block: 'center' });
+            setTimeout(() => {
+              const rect = btn.getBoundingClientRect();
+              const x = Math.round(rect.left + rect.width / 2);
+              const y = Math.round(rect.top + rect.height / 2);
+              chrome.runtime.sendMessage({ type: 'CLICK_AT', x, y }).catch(() => {});
+            }, 400);
             return { status: 'ok', toast: '🔄 换一换' };
           }
         }
@@ -1053,6 +1042,8 @@
             showToast(result.toast || message.gesture || '已执行', result.toastDuration);
           } else if (result.status === 'no_video') {
             showToast('当前页面未检测到视频');
+          } else if (result.status === 'error') {
+            showToast('⚠️ ' + (result.message || '操作失败'));
           }
           return result;
         }

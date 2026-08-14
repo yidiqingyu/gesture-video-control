@@ -123,6 +123,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+  // 原生级鼠标点击（B 站“换一换”等只响应 isTrusted 的真实事件，
+  // 页面内合成事件无效，必须用 CDP Input.dispatchMouseEvent）
+  if (message.type === 'CLICK_AT') {
+    const tabId = sender && sender.tab && sender.tab.id;
+    if (!tabId || typeof message.x !== 'number' || typeof message.y !== 'number') {
+      sendResponse({ ok: false, error: '缺少点击坐标' });
+      return;
+    }
+    (async () => {
+      try {
+        await chrome.debugger.attach({ tabId }, '1.3');
+        await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
+          type: 'mousePressed', x: message.x, y: message.y, button: 'left', clickCount: 1
+        });
+        await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
+          type: 'mouseReleased', x: message.x, y: message.y, button: 'left', clickCount: 1
+        });
+        await chrome.debugger.detach({ tabId });
+        sendResponse({ ok: true });
+      } catch (e) {
+        try { await chrome.debugger.detach({ tabId }); } catch (e2) { /* 忽略 */ }
+        sendResponse({ ok: false, error: String((e && e.message) || e) });
+      }
+    })();
+    return true; // 异步响应
+  }
+
   // 离屏文档无法直接访问 chrome.storage，由后台代为写入短视频模式状态
   if (message.type === 'SHORT_VIDEO_MODE_SET') {
     chrome.storage.local.set({ shortVideoMode: !!message.value });
