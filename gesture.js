@@ -127,8 +127,10 @@ const GestureMath = (() => {
       lm[20].y < lm[17].y - 0.008;
     if (phonePose) return { name: '666', ok: false, detail: '666 手势：拇指+小指伸直' };
 
-    // 🤟（I love you / 摇滚）：拇指、食指、小指伸直，中指、无名指收着
-    const rockPose = thumb > EXT_WEAK && idx > EXT_WEAK && pinky > EXT_WEAK &&
+    // 🤟（I love you / 摇滚）：拇指、食指、小指都“明显伸直”，中指、无名指收着。
+    // 阈值必须用 EXT_STRONG：比“食指向上”时小指/拇指常会不自觉半伸（1.25~1.6），
+    // 如果只要求超过 1.25，食指向上会被误判成 🤟。
+    const rockPose = thumb > EXT_STRONG && idx > EXT_STRONG && pinky > EXT_STRONG &&
       mid < EXT_WEAK && ring < EXT_WEAK &&
       mid < idx * 0.8 && ring < idx * 0.8 &&
       mid < pinky * 0.8 && ring < pinky * 0.8;
