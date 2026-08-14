@@ -383,6 +383,25 @@ function onHandsResults(results) {
   }
   state.bothLikeFrames = 0;
 
+  // 双手食指交叉 → 关闭当前页面（两只手的食指都伸直，且两指尖距离很近 = 交叉）
+  const indexExtended = (h) => GestureMath.extensionScore(h, 8, 6, 5) > 1.5;
+  const indexHands = hands.filter(indexExtended);
+  if (indexHands.length >= 2) {
+    const tipDist = GestureMath.dist(indexHands[0][8], indexHands[1][8]);
+    const szMax = Math.max(GestureMath.handSize(indexHands[0]), GestureMath.handSize(indexHands[1]));
+    if (tipDist < szMax * 0.3) {
+      state.crossFrames = (state.crossFrames || 0) + 1;
+      setGesture('双手食指交叉', '两个食指交叉（检测到 ' + hands.length + ' 只手）→ 关闭当前页面');
+      if (state.crossFrames >= 3 && now - state.lastActionTime >= state.debounceMs) {
+        state.lastActionTime = now;
+        state.crossFrames = 0;
+        triggerAction('close_tab', '双手食指交叉');
+      }
+      return; // 交叉时不再执行单手动作
+    }
+  }
+  state.crossFrames = 0;
+
   // OK：捏合跳变触发播放/暂停
   if (pose.ok) {
     if (!state.okPinched && stable) {
@@ -428,12 +447,6 @@ function onHandsResults(results) {
     }
   } else {
     state.singleLikeFrames = 0;
-  }
-
-  // 大拇指向左：返回 B 站首页
-  if (stable && pose.name === '大拇指向左' && now - state.lastActionTime >= state.debounceMs) {
-    state.lastActionTime = now;
-    triggerAction('bili_home', '大拇指向左');
   }
 
   // 🤟：点击 B 站首页“换一换”按钮

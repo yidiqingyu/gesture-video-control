@@ -113,6 +113,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.warn('[手势视频控制] 内容脚本上报错误：', message.error);
   }
 
+  // 双手食指交叉：关闭当前标签页（content script 无法直接关闭，由后台执行）
+  if (message.type === 'CLOSE_TAB') {
+    const tabId = sender && sender.tab && sender.tab.id;
+    if (tabId) {
+      chrome.tabs.remove(tabId).catch(() => {});
+    }
+    sendResponse({ ok: !!tabId });
+    return;
+  }
+
   // 离屏文档无法直接访问 chrome.storage，由后台代为写入短视频模式状态
   if (message.type === 'SHORT_VIDEO_MODE_SET') {
     chrome.storage.local.set({ shortVideoMode: !!message.value });

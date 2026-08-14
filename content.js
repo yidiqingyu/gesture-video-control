@@ -488,8 +488,8 @@
     '食指向下': '👇',
     '点赞': '👍',
     '双手点赞': '👍👍',
-    '大拇指向左': '👈',
     '🤟': '🤟',
+    '双手食指交叉': '🤞',
     '手掌张开': '🖐️',
     '666': '6️⃣6️⃣6️⃣',
     '🔒 已锁定': '🔒',
@@ -987,14 +987,6 @@
             : '🔓 已解锁：手势操作已恢复'
         };
       }
-      case 'bili_home': {
-        // 大拇指向左：返回 B 站首页
-        if (location.hostname.includes('bilibili.com')) {
-          location.href = 'https://www.bilibili.com/';
-          return { status: 'ok', toast: '🏠 返回 B 站首页' };
-        }
-        return { status: 'error', message: '仅 B 站页面可用' };
-      }
       case 'bili_refresh': {
         // 🤟：点击 B 站首页的“换一换”按钮刷新推荐流
         const rollBtns = document.querySelectorAll('button.roll-btn, [class*="roll-btn"]');
@@ -1005,6 +997,11 @@
           }
         }
         return { status: 'error', message: '未找到“换一换”按钮（需在 B 站首页使用）' };
+      }
+      case 'close_tab': {
+        // 双手食指交叉：关闭当前页面（由后台 Service Worker 执行）
+        chrome.runtime.sendMessage({ type: 'CLOSE_TAB' }).catch(() => {});
+        return { status: 'ok', toast: '❌ 关闭当前页面' };
       }
       case 'next': {
         const r = nextVideo();
