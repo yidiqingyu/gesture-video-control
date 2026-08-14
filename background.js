@@ -15,6 +15,25 @@ let controlTabId = null;
 // 当前控制页是否为 B 站首页（数字手势只在首页生效）
 let currentIsBiliHome = false;
 
+// MV3 Service Worker 会休眠，内存变量会丢，控制目标要持久化到 storage
+function saveControlTab(id) {
+  controlTabId = id;
+  chrome.storage.local.set({ controlTabId: id }).catch(() => {});
+}
+
+function loadControlTab() {
+  return chrome.storage.local.get('controlTabId').then((r) => {
+    controlTabId = r.controlTabId || null;
+    return controlTabId;
+  }).catch(() => {
+    controlTabId = null;
+    return null;
+  });
+}
+
+// Service Worker 每次被唤醒时恢复控制目标
+loadControlTab();
+
 // ---------- 默认设置 ----------
 const DEFAULT_SETTINGS = {
   // 一次性手势（OK / 食指切集 / 挥掌）触发后的冷却时间（毫秒）
@@ -45,11 +64,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== 'string') return;
 
   // 后台识别引擎的状态广播 → 转发给控制中的标签页（悬浮面板显示用）
-  if (message.type === 'OFFSCREEN_UPDATE' && controlTabId) {
-    chrome.tabs.sendMessage(controlTabId, {
-      type: 'PANEL_STATUS',
-      payload: message
-    }).catch(() => {});
+  if (message.type === 'OFFSCREEN_UPDATE') {
+    loadControlTab().then(() => {
+      if (!controlTabId) return;
+      chrome.tabs.sendMessage(controlTabId, {
+        type: 'PANEL_STATUS',
+        payload: message
+      }).catch(() => {});
+    });
     return; // 广播消息，不异步响应
   }
 
@@ -154,6 +176,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // 内容脚本上报页面类型（是否 B 站首页），存下来并广播给识别引擎
   if (message.type === 'PAGE_INFO') {
+    // B 站页面自动注入 content 后会自动上报，这里顺手绑定控制目标
+    if (sender && sender.tab && sender.tab.id) {
+      saveControlTab(sender.tab.id);
+    }
     currentIsBiliHome = !!message.isBiliHome;
     chrome.runtime.sendMessage({ type: 'PAGE_INFO_SET', isBiliHome: currentIsBiliHome }).catch(() => {});
     sendResponse({ ok: true });
@@ -177,7 +203,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             sendResponse({ ok: false, error: '后台识别页创建失败' });
             return;
           }
-          controlTabId = tabId || controlTabId;
+          if (tabId) saveControlTab(tabId);
           await chrome.storage.local.set({ controlOn: true });
           chrome.runtime.sendMessage({
             type: 'OFFSCREEN_START',
@@ -204,7 +230,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // 悬浮面板显示时注册状态转发目标（引擎可能已由弹窗启动）
   if (message.type === 'PANEL_ATTACH') {
     const tabId = message.tabId || (sender && sender.tab && sender.tab.id);
-    if (tabId) controlTabId = tabId;
+    if (tabId) saveControlTab(tabId);
     // 把当前后台引擎状态立即回给面板
     chrome.runtime.sendMessage({ type: 'OFFSCREEN_GET_STATUS' }, (resp) => {
       if (resp && resp.type === 'OFFSCREEN_UPDATE') {
@@ -263,43 +289,24 @@ chrome.windows.onRemoved.addListener((windowId) => {
   });
 });
 
-// 控制的标签页发生导航后自动重新注入 content 脚本，
-// 否则整页跳转（打开视频 / 返回首页）后手势会失灵，必须手动点插件才恢复。
-// 同时先按“非首页”处理，避免上一页是首页时把状态带过来。
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (tabId !== controlTabId) return;
-  if (!tab || !tab.url) return;
-  const isBili = tab.url.indexOf('bilibili.com') !== -1;
-  if (changeInfo.status === 'complete') {
-    if (isBili) {
-      // 页面加载完成后重新注入（content 脚本内部有防重复标记）
-      chrome.scripting.executeScript({
-        target: { tabId },
-        files: ['content.js']
-      }).catch(() => {});
-    }
-    currentIsBiliHome = false;
-    chrome.runtime.sendMessage({ type: 'PAGE_INFO_SET', isBiliHome: false }).catch(() => {});
-  }
-});
-
 // 用户切到其它 B 站标签页时，自动把手势控制目标跟过去
 //（否则引擎还绑着旧标签，会出现“在看视频却操作了首页”的情况）
-chrome.tabs.onActivated.addListener((activeInfo) => {
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+  await loadControlTab();
   if (!controlTabId || activeInfo.tabId === controlTabId) return;
   chrome.tabs.get(activeInfo.tabId, (tab) => {
     if (chrome.runtime.lastError || !tab) return;
     if (!tab.url || tab.url.indexOf('bilibili.com') === -1) return;
-    // 切换到新标签：注入 content、更新控制目标并通知引擎
-    controlTabId = activeInfo.tabId;
+    // 切换到新标签：更新控制目标并通知引擎（B 站页面已由 manifest 自动注入 content）
+    saveControlTab(activeInfo.tabId);
     currentIsBiliHome = false;
     chrome.scripting.executeScript({
-      target: { tabId: controlTabId },
+      target: { tabId: activeInfo.tabId },
       files: ['content.js']
     }).catch(() => {});
     chrome.runtime.sendMessage({
       type: 'TARGET_CHANGED',
-      tabId: controlTabId,
+      tabId: activeInfo.tabId,
       isBiliHome: false
     }).catch(() => {});
   });
