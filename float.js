@@ -754,13 +754,18 @@ function handleRecResult(result) {
   }
   state.bothLikeFrames = 0;
 
-  // 双手食指交叉 → 关闭当前页面（两只手的食指都伸直，且两指尖距离很近 = 交叉）
+  // 双手食指交叉 → 关闭当前页面（两只手的食指都伸直，
+  // 食指线段相交（X 型交叉）或两指尖相触都算）
   const indexExtended = (h) => GestureMath.extensionScore(h, 8, 6, 5) > 1.5;
   const indexHands = hands.filter(indexExtended);
   if (indexHands.length >= 2) {
-    const tipDist = GestureMath.dist(indexHands[0][8], indexHands[1][8]);
-    const szMax = Math.max(GestureMath.handSize(indexHands[0]), GestureMath.handSize(indexHands[1]));
-    if (tipDist < szMax * 0.3) {
+    const h1 = indexHands[0];
+    const h2 = indexHands[1];
+    const szMax = Math.max(GestureMath.handSize(h1), GestureMath.handSize(h2));
+    const tipDist = GestureMath.dist(h1[8], h2[8]);
+    const crossed = GestureMath.segmentsIntersect(h1[5], h1[8], h2[5], h2[8]) ||
+                    tipDist < szMax * 0.3;
+    if (crossed) {
       state.crossFrames = (state.crossFrames || 0) + 1;
       setGestureLocal('双手食指交叉', '两个食指交叉（检测到 ' + hands.length + ' 只手）→ 关闭当前页面');
       if (state.crossFrames >= 3 && now - state.lastActionTime >= state.debounceMs) {

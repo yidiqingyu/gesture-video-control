@@ -44,6 +44,15 @@ const GestureMath = (() => {
     return tipMcp / Math.max(pipMcp, 1e-4);
   }
 
+  // 两条线段（a→b、c→d）是否相交（含端点接触）。用于“双手食指交叉”判定。
+  function segmentsIntersect(a, b, c, d) {
+    const det = (b.x - a.x) * (d.y - c.y) - (b.y - a.y) * (d.x - c.x);
+    if (Math.abs(det) < 1e-9) return false; // 平行或共线
+    const t = ((c.x - a.x) * (d.y - c.y) - (c.y - a.y) * (d.x - c.x)) / det;
+    const u = ((c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x)) / det;
+    return t >= -0.05 && t <= 1.05 && u >= -0.05 && u <= 1.05;
+  }
+
   // 阈值定义
   const EXT_WEAK = 1.25;   // 伸展度大于此值视为“伸直”
   const CURLED = 1.1;      // 伸展度小于此值视为“弯曲”
@@ -170,7 +179,7 @@ const GestureMath = (() => {
     };
   }
 
-  return { classifyPose, dist, handSize, extensionScore };
+  return { classifyPose, dist, handSize, extensionScore, segmentsIntersect };
 })();
 
 // 暴露给 ES Module（offscreen.js）使用：
