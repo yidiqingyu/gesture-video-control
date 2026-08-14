@@ -263,11 +263,21 @@ chrome.windows.onRemoved.addListener((windowId) => {
   });
 });
 
-// 控制的标签页发生导航（整页跳转 / SPA URL 变化）时，先按“非首页”处理，
-// 避免上一页是首页时把状态带过来；content 脚本重新注入后会再上报真实状态
+// 控制的标签页发生导航后自动重新注入 content 脚本，
+// 否则整页跳转（打开视频 / 返回首页）后手势会失灵，必须手动点插件才恢复。
+// 同时先按“非首页”处理，避免上一页是首页时把状态带过来。
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (tabId === controlTabId && changeInfo.url && tab && tab.url &&
-      tab.url.indexOf('bilibili.com') !== -1) {
+  if (tabId !== controlTabId) return;
+  if (!tab || !tab.url) return;
+  const isBili = tab.url.indexOf('bilibili.com') !== -1;
+  if (changeInfo.status === 'complete') {
+    if (isBili) {
+      // 页面加载完成后重新注入（content 脚本内部有防重复标记）
+      chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['content.js']
+      }).catch(() => {});
+    }
     currentIsBiliHome = false;
     chrome.runtime.sendMessage({ type: 'PAGE_INFO_SET', isBiliHome: false }).catch(() => {});
   }

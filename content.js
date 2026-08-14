@@ -17,6 +17,10 @@
 (() => {
   'use strict';
 
+  // 防止同一页面重复注入（popup / 悬浮窗 / 导航后自动注入可能多次执行）
+  if (window.__gvcInjected) return;
+  window.__gvcInjected = true;
+
   // ---------- 配置 ----------
   const TOAST_DURATION = 1500; // 提示浮层显示时长（毫秒）
 
