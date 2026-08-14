@@ -123,7 +123,16 @@
       try {
         await video.play();
       } catch (e) {
-        // 常见原因：浏览器自动播放策略（扩展发起的 play() 不算用户手势）
+        // 浏览器自动播放策略会拒绝脚本发起的 play()（不算用户手势），
+        // 但 pause() 不受限——所以出现“只能暂停不能播放”。
+        // 抖音等网页播放器支持空格键播放/暂停，用合成空格键兜底
+        sendCharKey(' ', 'Space', 32);
+        // 等一拍让页面响应，再确认是否真的播起来了
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        const v2 = findMainVideo();
+        if (v2 && !v2.paused) {
+          return { status: 'ok' };
+        }
         return {
           status: 'error',
           message: '播放失败：浏览器自动播放策略限制，请先在页面上手动点击一次视频'
