@@ -176,10 +176,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // 内容脚本上报页面类型（是否 B 站首页），存下来并广播给识别引擎
   if (message.type === 'PAGE_INFO') {
-    // B 站页面自动注入 content 后会自动上报，这里顺手绑定控制目标
-    if (sender && sender.tab && sender.tab.id) {
-      saveControlTab(sender.tab.id);
-    }
+    // 只更新页面类型状态；控制目标由标签切换（onActivated/onUpdated）绑定，
+    // 避免后台标签加载时抢占当前控制目标
     currentIsBiliHome = !!message.isBiliHome;
     chrome.runtime.sendMessage({ type: 'PAGE_INFO_SET', isBiliHome: currentIsBiliHome }).catch(() => {});
     sendResponse({ ok: true });
@@ -289,25 +287,50 @@ chrome.windows.onRemoved.addListener((windowId) => {
   });
 });
 
-// 用户切到其它 B 站标签页时，自动把手势控制目标跟过去
-//（否则引擎还绑着旧标签，会出现“在看视频却操作了首页”的情况）
+// 把手势控制目标切换到指定标签，并通知识别引擎
+function switchControlTab(tabId) {
+  saveControlTab(tabId);
+  currentIsBiliHome = false;
+  chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['content.js']
+  }).catch(() => {});
+  chrome.runtime.sendMessage({
+    type: 'TARGET_CHANGED',
+    tabId,
+    isBiliHome: false
+  }).catch(() => {});
+}
+
+// 标签加载完成：
+//  1) 是当前控制标签 → 兜底重新注入 content（manifest content_scripts 万一没生效）
+//  2) 是其它 B 站标签且当前正被激活 → 把手势控制目标跟过去
+//     （B 站首页点视频常开新标签，onActivated 触发时新标签 URL 可能还没就绪，
+//       这里在加载完成后补刀切换，避免引擎一直绑着旧标签）
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'complete') return;
+  await loadControlTab();
+  if (!tab || !tab.url || tab.url.indexOf('bilibili.com') === -1) return;
+  if (tabId === controlTabId) {
+    chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content.js']
+    }).catch(() => {});
+    return;
+  }
+  const active = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
+  if (active && active[0] && active[0].id === tabId) {
+    switchControlTab(tabId);
+  }
+});
+
+// 用户切到其它 B 站标签页时，立即尝试跟随（URL 已就绪的情况）
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   await loadControlTab();
   if (!controlTabId || activeInfo.tabId === controlTabId) return;
   chrome.tabs.get(activeInfo.tabId, (tab) => {
     if (chrome.runtime.lastError || !tab) return;
     if (!tab.url || tab.url.indexOf('bilibili.com') === -1) return;
-    // 切换到新标签：更新控制目标并通知引擎（B 站页面已由 manifest 自动注入 content）
-    saveControlTab(activeInfo.tabId);
-    currentIsBiliHome = false;
-    chrome.scripting.executeScript({
-      target: { tabId: activeInfo.tabId },
-      files: ['content.js']
-    }).catch(() => {});
-    chrome.runtime.sendMessage({
-      type: 'TARGET_CHANGED',
-      tabId: activeInfo.tabId,
-      isBiliHome: false
-    }).catch(() => {});
+    switchControlTab(activeInfo.tabId);
   });
 });
