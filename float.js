@@ -94,6 +94,8 @@ const GESTURE_EMOJI = {
   '食指向上': '☝️',
   '点赞': '👍',
   '双手点赞': '👍👍',
+  '大拇指向左': '👈',
+  '🤟': '🤟',
   '食指向下': '👇',
   '握拳': '✊',
   '手掌张开': '🖐️',
@@ -797,6 +799,18 @@ function handleRecResult(result) {
     }
   } else {
     state.singleLikeFrames = 0;
+  }
+
+  // 大拇指向左：返回 B 站首页
+  if (stable && pose.name === '大拇指向左' && now - state.lastActionTime >= state.debounceMs) {
+    state.lastActionTime = now;
+    sendAction('bili_home', '大拇指向左');
+  }
+
+  // 🤟：点击 B 站首页“换一换”按钮
+  if (stable && pose.name === '🤟' && now - state.lastActionTime >= state.debounceMs) {
+    state.lastActionTime = now;
+    sendAction('bili_refresh', '🤟');
   }
   }
 

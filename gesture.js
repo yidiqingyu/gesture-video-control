@@ -118,6 +118,21 @@ const GestureMath = (() => {
       lm[20].y < lm[17].y - 0.008;
     if (phonePose) return { name: '666', ok: false, detail: '666 手势：拇指+小指伸直' };
 
+    // 大拇指向左：拇指明显伸直且指向画面左侧，其余四指都收着。
+    // 必须放在“点赞”之前，否则拇指朝左时会被点赞抢走（点赞只判伸度不判方向）。
+    const thumbLeft = thumb > EXT_WEAK &&
+      idx < EXT_WEAK && mid < EXT_WEAK && ring < EXT_WEAK && pinky < EXT_WEAK &&
+      idx < thumb * 0.85 && mid < thumb * 0.85 && ring < thumb * 0.85 && pinky < thumb * 0.85 &&
+      lm[2].x - lm[4].x > sz * 0.35;
+    if (thumbLeft) return { name: '大拇指向左', ok: false, detail: '大拇指向左（返回首页）' };
+
+    // 🤟（I love you / 摇滚）：拇指、食指、小指伸直，中指、无名指收着
+    const rockPose = thumb > EXT_WEAK && idx > EXT_WEAK && pinky > EXT_WEAK &&
+      mid < EXT_WEAK && ring < EXT_WEAK &&
+      mid < idx * 0.8 && ring < idx * 0.8 &&
+      mid < pinky * 0.8 && ring < pinky * 0.8;
+    if (rockPose) return { name: '🤟', ok: false, detail: '拇指+食指+小指伸直（摇滚）' };
+
     // 单个小拇指：小指伸直，其余三指都收着。
     // 判定放宽：允许食指/中指/无名指只是“半弯”（不要求完全弯曲），
     // 只要它们都没伸直、且明显不如小指伸得开，就算小拇指。

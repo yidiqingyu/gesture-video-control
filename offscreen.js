@@ -430,6 +430,18 @@ function onHandsResults(results) {
     state.singleLikeFrames = 0;
   }
 
+  // 大拇指向左：返回 B 站首页
+  if (stable && pose.name === '大拇指向左' && now - state.lastActionTime >= state.debounceMs) {
+    state.lastActionTime = now;
+    triggerAction('bili_home', '大拇指向左');
+  }
+
+  // 🤟：点击 B 站首页“换一换”按钮
+  if (stable && pose.name === '🤟' && now - state.lastActionTime >= state.debounceMs) {
+    state.lastActionTime = now;
+    triggerAction('bili_refresh', '🤟');
+  }
+
   // 握拳：不再触发任何动作（保留识别，避免握拳被误判成其它手势）
 
   // 手掌张开：保持 2 秒切换长/短视频模式（上下挥动切集已移除）
