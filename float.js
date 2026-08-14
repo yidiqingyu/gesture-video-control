@@ -296,6 +296,11 @@ function onRuntimeMessage(message) {
     }
     return;
   }
+  if (message.type === 'TARGET_CHANGED') {
+    if (message.tabId) state.tabId = message.tabId;
+    if (typeof message.isBiliHome === 'boolean') state.isBiliHome = message.isBiliHome;
+    return;
+  }
   // 页面内识别运行期间，忽略后台引擎的状态（避免互相覆盖）
   if (state.recRunning) return;
   if (message.type === 'OFFSCREEN_UPDATE') {

@@ -214,10 +214,18 @@
     return { status: 'ok' };
   }
 
-  // 是否 B 站首页（数字手势只在首页生效）
+  // 页面是否有“换一换”按钮（B 站首页特征，数字手势只在首页生效）
+  function hasRollButton() {
+    const btn = document.querySelector('button.roll-btn');
+    return !!(btn && btn.textContent && btn.textContent.indexOf('换一换') !== -1);
+  }
+
+  // 是否 B 站首页（数字手势只在首页生效）。
+  // URL 和 DOM 双重确认：即使 URL 像首页（SPA 内嵌播放），没有“换一换”按钮也不算。
   function isBiliHome() {
     return location.hostname.includes('bilibili.com') &&
-      (location.pathname === '/' || location.pathname === '/index.html');
+      (location.pathname === '/' || location.pathname === '/index.html') &&
+      hasRollButton();
   }
 
   // B 站首页“换一换”旁边的推荐卡片（2 行 3 列，DOM 顺序即 1~6）
@@ -1093,8 +1101,7 @@
 
   // ---------- 页面类型上报（数字手势需要知道是否 B 站首页）----------
   function currentBiliHome() {
-    return location.hostname.includes('bilibili.com') &&
-      (location.pathname === '/' || location.pathname === '/index.html');
+    return isBiliHome();
   }
   let lastReportedHome = null;
   function reportPageInfo() {

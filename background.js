@@ -262,3 +262,35 @@ chrome.windows.onRemoved.addListener((windowId) => {
     }
   });
 });
+
+// 控制的标签页发生导航（整页跳转 / SPA URL 变化）时，先按“非首页”处理，
+// 避免上一页是首页时把状态带过来；content 脚本重新注入后会再上报真实状态
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (tabId === controlTabId && changeInfo.url && tab && tab.url &&
+      tab.url.indexOf('bilibili.com') !== -1) {
+    currentIsBiliHome = false;
+    chrome.runtime.sendMessage({ type: 'PAGE_INFO_SET', isBiliHome: false }).catch(() => {});
+  }
+});
+
+// 用户切到其它 B 站标签页时，自动把手势控制目标跟过去
+//（否则引擎还绑着旧标签，会出现“在看视频却操作了首页”的情况）
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  if (!controlTabId || activeInfo.tabId === controlTabId) return;
+  chrome.tabs.get(activeInfo.tabId, (tab) => {
+    if (chrome.runtime.lastError || !tab) return;
+    if (!tab.url || tab.url.indexOf('bilibili.com') === -1) return;
+    // 切换到新标签：注入 content、更新控制目标并通知引擎
+    controlTabId = activeInfo.tabId;
+    currentIsBiliHome = false;
+    chrome.scripting.executeScript({
+      target: { tabId: controlTabId },
+      files: ['content.js']
+    }).catch(() => {});
+    chrome.runtime.sendMessage({
+      type: 'TARGET_CHANGED',
+      tabId: controlTabId,
+      isBiliHome: false
+    }).catch(() => {});
+  });
+});

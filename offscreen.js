@@ -110,6 +110,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       sendResponse({ ok: true });
       break;
+    case 'TARGET_CHANGED':
+      // 控制目标切换到其它 B 站标签页（用户切换标签后自动跟随）
+      if (message.tabId) state.targetTabId = message.tabId;
+      if (typeof message.isBiliHome === 'boolean') state.isBiliHome = message.isBiliHome;
+      sendResponse({ ok: true });
+      break;
     case 'OFFSCREEN_GET_STATUS':
       sendResponse(buildStatus());
       break;
