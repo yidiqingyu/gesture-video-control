@@ -100,10 +100,11 @@ const GestureMath = (() => {
     // 识别出来但不触发任何动作，防止残留手型误判成别的指令
     const thumbMiddlePinch = !allCurled && dist(lm[4], lm[12]) < sz * 0.38;
 
-    // 单个食指：食指明显伸直，其余三指明显低于食指（允许半弯，
-    // 竖屏/随意姿势下其它手指往往不会完全收拢，太严格会识别不到）
+    // 单个食指：食指明显伸直，中指/无名指明显低于食指。
+    // 小指放宽：很多人比食指时小指会不自觉伸开，只要小指仍明显弱于食指即可
+    //（小指伸得和食指差不多时，交给前面的 🤟 等手势判定）。
     const indexSolo = idx > EXT_STRONG &&
-      mid < EXT_STRONG && ring < EXT_STRONG && pinky < EXT_STRONG &&
+      mid < EXT_STRONG && ring < EXT_STRONG &&
       mid < idx * 0.78 && ring < idx * 0.78 && pinky < idx * 0.78;
     const indexUp = indexSolo && lm[8].y < lm[6].y - 0.015;
     const indexDown = indexSolo && lm[8].y > lm[6].y + 0.015;
@@ -128,12 +129,16 @@ const GestureMath = (() => {
     if (phonePose) return { name: '666', ok: false, detail: '666 手势：拇指+小指伸直' };
 
     // 🤟（I love you / 摇滚）：拇指、食指、小指都“明显伸直”，中指、无名指收着。
-    // 阈值必须用 EXT_STRONG：比“食指向上”时小指/拇指常会不自觉半伸（1.25~1.6），
-    // 如果只要求超过 1.25，食指向上会被误判成 🤟。
+    // 需要三重防误判，否则“食指向上”会被抢：
+    //   1) 拇指/小指都须 > EXT_STRONG（半伸不算）；
+    //   2) 小指伸度要接近食指（食指向上时小指即使伸开也明显弱于食指）；
+    //   3) 小指尖朝上（食指向上时小指通常朝下或水平）。
     const rockPose = thumb > EXT_STRONG && idx > EXT_STRONG && pinky > EXT_STRONG &&
       mid < EXT_WEAK && ring < EXT_WEAK &&
       mid < idx * 0.8 && ring < idx * 0.8 &&
-      mid < pinky * 0.8 && ring < pinky * 0.8;
+      mid < pinky * 0.8 && ring < pinky * 0.8 &&
+      pinky >= idx * 0.75 &&
+      lm[20].y < lm[17].y - 0.008;
     if (rockPose) return { name: '🤟', ok: false, detail: '拇指+食指+小指伸直（摇滚）' };
 
     // 单个小拇指：小指伸直，其余三指都收着。
