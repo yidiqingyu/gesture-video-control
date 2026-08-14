@@ -155,9 +155,10 @@ const GestureMath = (() => {
       idx > pinky * 1.2 && mid > pinky * 1.2 && ring > pinky * 1.2;
     if (threePose) return { name: '数字3', ok: false, detail: '食中无名指伸出（数字 3）' };
 
-    // 数字 4：四指伸直、拇指收着（与手掌张开的区别：手掌张开拇指也伸）
+    // 数字 4：四指伸直、拇指没有明显伸直（比 4 时拇指常只是自然搭着，
+    // 要求完全收着会误判成手掌张开；手掌张开时拇指明显伸直 > EXT_STRONG）
     const fourPose = idx > EXT_STRONG && mid > EXT_STRONG && ring > EXT_STRONG && pinky > EXT_STRONG &&
-      thumb < EXT_WEAK;
+      thumb < EXT_STRONG;
     if (fourPose) return { name: '数字4', ok: false, detail: '四指伸出、拇指收（数字 4）' };
 
     // 单个小拇指：小指伸直，其余三指都收着。
