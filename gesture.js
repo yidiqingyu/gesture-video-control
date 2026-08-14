@@ -118,14 +118,14 @@ const GestureMath = (() => {
       lm[20].y < lm[17].y - 0.008;
     if (phonePose) return { name: '666', ok: false, detail: '666 手势：拇指+小指伸直' };
 
-    // 大拇指向左：拇指明显伸直且指向用户视觉左侧，其余四指都收着。
-    // 必须放在“点赞”之前，否则拇指朝左时会被点赞抢走（点赞只判伸度不判方向）。
+    // 大拇指向左：拇指明显伸直且指向用户视觉左侧，其余四指没有明显伸直即可
+    //（允许半伸——很多人比拇指时其它手指会自然张开，要求完全收着会误判成
+    //  点赞/手掌张开）。必须放在“点赞”和“手掌张开”之前，否则会被它们抢走。
     // 注意：预览画面是镜像的（CSS scaleX(-1)），用户照镜子比“朝左”时，
     // 原始摄像头帧里拇指尖在画面右侧，所以这里判断 lm[4].x 大于 lm[2].x。
     const thumbLeft = thumb > EXT_WEAK &&
-      idx < EXT_WEAK && mid < EXT_WEAK && ring < EXT_WEAK && pinky < EXT_WEAK &&
-      idx < thumb * 0.85 && mid < thumb * 0.85 && ring < thumb * 0.85 && pinky < thumb * 0.85 &&
-      lm[4].x - lm[2].x > sz * 0.3;
+      idx < EXT_STRONG && mid < EXT_STRONG && ring < EXT_STRONG && pinky < EXT_STRONG &&
+      lm[4].x - lm[2].x > sz * 0.2;
     if (thumbLeft) return { name: '大拇指向左', ok: false, detail: '大拇指向左（返回首页）' };
 
     // 🤟（I love you / 摇滚）：拇指、食指、小指伸直，中指、无名指收着
