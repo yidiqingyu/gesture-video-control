@@ -103,11 +103,13 @@ const GestureMath = (() => {
     // 单个食指：食指明显伸直，中指/无名指明显低于食指。
     // 小指放宽：很多人比食指时小指会不自觉伸开，只要小指仍明显弱于食指即可
     //（小指伸得和食指差不多时，交给前面的 🤟 等手势判定）。
-    const indexSolo = idx > EXT_STRONG &&
+    // 阈值放宽（1.6→1.35、比率 0.78→0.85、方向 0.015→0.008）：
+    // 用户手指不完全笔直/手略斜时也能识别，成功率更高。
+    const indexSolo = idx > 1.35 &&
       mid < EXT_STRONG && ring < EXT_STRONG &&
-      mid < idx * 0.78 && ring < idx * 0.78 && pinky < idx * 0.78;
-    const indexUp = indexSolo && lm[8].y < lm[6].y - 0.015;
-    const indexDown = indexSolo && lm[8].y > lm[6].y + 0.015;
+      mid < idx * 0.85 && ring < idx * 0.85 && pinky < idx * 0.85;
+    const indexUp = indexSolo && lm[8].y < lm[6].y - 0.008;
+    const indexDown = indexSolo && lm[8].y > lm[6].y + 0.008;
 
     // 电话（打电话）：拇指 + 小指伸直，中间三指（食/中/无名）收着。
     // 必须放在“小拇指”和“点赞”判定之前，否则会被它们抢走
