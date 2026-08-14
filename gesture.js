@@ -143,6 +143,23 @@ const GestureMath = (() => {
       lm[20].y < lm[17].y - 0.008;
     if (rockPose) return { name: '🤟', ok: false, detail: '拇指+食指+小指伸直（摇滚）' };
 
+    // 数字 2（V）：食指+中指伸直，无名指+小指收着
+    const twoPose = idx > EXT_STRONG && mid > EXT_STRONG &&
+      ring < EXT_WEAK && pinky < EXT_WEAK &&
+      idx > ring * 1.2 && mid > ring * 1.2 && idx > pinky * 1.2 && mid > pinky * 1.2;
+    if (twoPose) return { name: '数字2', ok: false, detail: '食指+中指伸出（数字 2）' };
+
+    // 数字 3：食指+中指+无名指伸直，小指收着
+    const threePose = idx > EXT_STRONG && mid > EXT_STRONG && ring > EXT_STRONG &&
+      pinky < EXT_WEAK &&
+      idx > pinky * 1.2 && mid > pinky * 1.2 && ring > pinky * 1.2;
+    if (threePose) return { name: '数字3', ok: false, detail: '食中无名指伸出（数字 3）' };
+
+    // 数字 4：四指伸直、拇指收着（与手掌张开的区别：手掌张开拇指也伸）
+    const fourPose = idx > EXT_STRONG && mid > EXT_STRONG && ring > EXT_STRONG && pinky > EXT_STRONG &&
+      thumb < EXT_WEAK;
+    if (fourPose) return { name: '数字4', ok: false, detail: '四指伸出、拇指收（数字 4）' };
+
     // 单个小拇指：小指伸直，其余三指都收着。
     // 判定放宽：允许食指/中指/无名指只是“半弯”（不要求完全弯曲），
     // 只要它们都没伸直、且明显不如小指伸得开，就算小拇指。

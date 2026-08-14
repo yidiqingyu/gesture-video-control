@@ -214,6 +214,34 @@
     return { status: 'ok' };
   }
 
+  // 是否 B 站首页（数字手势只在首页生效）
+  function isBiliHome() {
+    return location.hostname.includes('bilibili.com') &&
+      (location.pathname === '/' || location.pathname === '/index.html');
+  }
+
+  // B 站首页“换一换”旁边的推荐卡片（2 行 3 列，DOM 顺序即 1~6）
+  function getBiliHomeCards() {
+    const cards = [];
+    for (const a of document.querySelectorAll('.bili-video-card a[href*="/video/"]')) {
+      const card = a.closest('.bili-video-card');
+      if (card && cards.indexOf(card) === -1) cards.push(card);
+    }
+    return cards;
+  }
+
+  // 滚动到元素中心并通知后台用 CDP 原生点击（B 站只响应真实鼠标事件）
+  function nativeClickAt(el, toast) {
+    el.scrollIntoView({ block: 'center' });
+    setTimeout(() => {
+      const rect = el.getBoundingClientRect();
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+      chrome.runtime.sendMessage({ type: 'CLICK_AT', x, y }).catch(() => {});
+    }, 400);
+    return { status: 'ok', toast };
+  }
+
   // 一键三连（B 站）：长按点赞按钮 → 快捷键 R → 找不到就退化为点赞
   function tripleLike() {
     const isBili = location.hostname.includes('bilibili.com');
@@ -471,6 +499,9 @@
     '双手点赞': '👍👍',
     '🤟': '🤟',
     '双手食指交叉': '🤞',
+    '数字2': '2️⃣',
+    '数字3': '3️⃣',
+    '数字4': '4️⃣',
     '手掌张开': '🖐️',
     '666': '6️⃣6️⃣6️⃣',
     '🔒 已锁定': '🔒',
@@ -973,19 +1004,23 @@
         const rollBtns = document.querySelectorAll('button.roll-btn, [class*="roll-btn"]');
         for (const btn of rollBtns) {
           if (btn.textContent && btn.textContent.indexOf('换一换') !== -1) {
-            // B 站“换一换”只响应真实鼠标事件（isTrusted），合成事件无效。
-            // 滚动到按钮、取中心坐标，交给后台用 CDP 原生点击。
-            btn.scrollIntoView({ block: 'center' });
-            setTimeout(() => {
-              const rect = btn.getBoundingClientRect();
-              const x = Math.round(rect.left + rect.width / 2);
-              const y = Math.round(rect.top + rect.height / 2);
-              chrome.runtime.sendMessage({ type: 'CLICK_AT', x, y }).catch(() => {});
-            }, 400);
-            return { status: 'ok', toast: '🔄 换一换' };
+            return nativeClickAt(btn, '🔄 换一换');
           }
         }
         return { status: 'error', message: '未找到“换一换”按钮（需在 B 站首页使用）' };
+      }
+      case 'num_1': case 'num_2': case 'num_3':
+      case 'num_4': case 'num_5': case 'num_6': {
+        // 数字手势（1~6）：B 站首页选“换一换”旁边的第 N 个视频
+        const n = parseInt(action.slice(4), 10);
+        if (!isBiliHome()) {
+          return { status: 'error', message: '数字手势仅在 B 站首页可用' };
+        }
+        const card = getBiliHomeCards()[n - 1];
+        if (!card) {
+          return { status: 'error', message: '未找到第 ' + n + ' 个视频卡片' };
+        }
+        return nativeClickAt(card, '▶ 打开第 ' + n + ' 个视频');
       }
       case 'close_tab': {
         // 双手食指交叉：关闭当前页面（由后台 Service Worker 执行）
@@ -1055,4 +1090,21 @@
     });
     return true; // 异步响应
   });
+
+  // ---------- 页面类型上报（数字手势需要知道是否 B 站首页）----------
+  function currentBiliHome() {
+    return location.hostname.includes('bilibili.com') &&
+      (location.pathname === '/' || location.pathname === '/index.html');
+  }
+  let lastReportedHome = null;
+  function reportPageInfo() {
+    const isHome = currentBiliHome();
+    if (isHome !== lastReportedHome) {
+      lastReportedHome = isHome;
+      chrome.runtime.sendMessage({ type: 'PAGE_INFO', isBiliHome: isHome }).catch(() => {});
+    }
+  }
+  reportPageInfo();
+  // SPA 内部跳转时 URL 会变，轮询检测变化后重新上报
+  setInterval(reportPageInfo, 3000);
 })();

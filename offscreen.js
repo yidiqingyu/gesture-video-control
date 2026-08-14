@@ -40,6 +40,7 @@ const state = {
   handFoundFrames: 0,    // 连续检测到手的帧数（显示防抖用）
   handLostFrames: 0,     // 连续没检测到手的帧数（显示防抖用）
   shortVideoMode: false, // 短视频模式（默认长视频模式）
+  isBiliHome: false,     // 当前控制页是否为 B 站首页（数字手势 1~6 只在首页生效）
   palmHoldStart: null,   // 手掌张开保持计时的起点
   palmHoldTriggered: false, // 本次保持是否已触发过模式切换
   phoneLocked: false,    // 电话手势锁定：锁定后不执行任何手势操作
@@ -75,6 +76,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'OFFSCREEN_START':
       if (message.tabId) state.targetTabId = message.tabId;
       state.controlOn = true;
+      if (typeof message.isBiliHome === 'boolean') state.isBiliHome = message.isBiliHome;
       // 离屏文档不能直接访问 chrome.storage，模式由弹窗/悬浮窗随消息传入
       if (typeof message.shortVideoMode === 'boolean') {
         state.shortVideoMode = message.shortVideoMode;
@@ -99,6 +101,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (typeof message.debounceMs === 'number') state.debounceMs = message.debounceMs;
       if (typeof message.volumeRepeatMs === 'number') state.volumeRepeatMs = message.volumeRepeatMs;
       notify();
+      sendResponse({ ok: true });
+      break;
+    case 'PAGE_INFO_SET':
+      // 页面类型变化（是否 B 站首页）实时同步
+      if (typeof message.isBiliHome === 'boolean') {
+        state.isBiliHome = message.isBiliHome;
+      }
       sendResponse({ ok: true });
       break;
     case 'OFFSCREEN_GET_STATUS':
@@ -347,6 +356,16 @@ function onHandsResults(results) {
 
   // 666 手势：保持 1.5 秒锁定 / 解锁（锁定期间其它手势一律不执行操作）
   if (pose.name === '666') {
+    // B 站首页：666 即数字 6，选第 6 个视频（快速触发，不等锁定保持）
+    if (state.isBiliHome) {
+      state.numFrames = (state.numFrames || 0) + 1;
+      if (state.numFrames >= 3 && now - state.lastActionTime >= state.debounceMs) {
+        state.lastActionTime = now;
+        state.numFrames = 0;
+        triggerAction('num_6', pose.name);
+      }
+      return;
+    }
     if (state.phoneHoldStart === null) {
       state.phoneHoldStart = now;
       setGesture('666', '保持 666 手势 1.5 秒' + (state.phoneLocked ? '解锁' : '锁定') + '…');
@@ -406,6 +425,34 @@ function onHandsResults(results) {
     }
   }
   state.crossFrames = 0;
+
+  // 数字手势 1~6：B 站首页选“换一换”旁边的第 N 个视频
+  //（1=食指、2=V、3=三指、4=四指、5=手掌张开、6=666）
+  const numMap = { '食指向上': 1, '食指向下': 1, '数字2': 2, '数字3': 3, '数字4': 4, '手掌张开': 5, '666': 6 };
+  const num = numMap[pose.name];
+  if (num) {
+    if (state.isBiliHome) {
+      // 首页：数字手势优先选视频（666 锁定、手掌切模式在首页让位）
+      state.numFrames = (state.numFrames || 0) + 1;
+      if (state.numFrames >= 3 && now - state.lastActionTime >= state.debounceMs) {
+        state.lastActionTime = now;
+        state.numFrames = 0;
+        triggerAction('num_' + num, pose.name);
+      }
+      return;
+    }
+    // 非首页：2/3/4 没有其它用途，提示一下；1/5/6 走下面的原有逻辑
+    if (num === 2 || num === 3 || num === 4) {
+      state.numFrames = (state.numFrames || 0) + 1;
+      if (state.numFrames >= 3 && now - state.lastActionTime >= state.debounceMs) {
+        state.lastActionTime = now;
+        state.numFrames = 0;
+        triggerAction('num_' + num, pose.name);
+      }
+      return;
+    }
+  }
+  state.numFrames = 0;
 
   // OK：捏合跳变触发播放/暂停
   if (pose.ok) {

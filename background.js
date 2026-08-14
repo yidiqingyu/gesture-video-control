@@ -12,6 +12,8 @@
 
 // 当前手势控制作用的标签页（悬浮面板 / 弹窗启动后台识别时记录）
 let controlTabId = null;
+// 当前控制页是否为 B 站首页（数字手势只在首页生效）
+let currentIsBiliHome = false;
 
 // ---------- 默认设置 ----------
 const DEFAULT_SETTINGS = {
@@ -150,6 +152,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // 异步响应
   }
 
+  // 内容脚本上报页面类型（是否 B 站首页），存下来并广播给识别引擎
+  if (message.type === 'PAGE_INFO') {
+    currentIsBiliHome = !!message.isBiliHome;
+    chrome.runtime.sendMessage({ type: 'PAGE_INFO_SET', isBiliHome: currentIsBiliHome }).catch(() => {});
+    sendResponse({ ok: true });
+    return;
+  }
+
   // 离屏文档无法直接访问 chrome.storage，由后台代为写入短视频模式状态
   if (message.type === 'SHORT_VIDEO_MODE_SET') {
     chrome.storage.local.set({ shortVideoMode: !!message.value });
@@ -172,6 +182,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           chrome.runtime.sendMessage({
             type: 'OFFSCREEN_START',
             tabId: controlTabId,
+            isBiliHome: currentIsBiliHome,
             shortVideoMode: message.shortVideoMode,
             volumeStep: message.volumeStep,
             debounceMs: message.debounceMs,
