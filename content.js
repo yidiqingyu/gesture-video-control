@@ -101,16 +101,34 @@
     return best;
   }
 
-  // 汇总页面视频状态（供 popup 显示）
+  // 这个 <video> 像不像"用户正在看的播放器"？
+  // 用来挡掉 B 站首页那种卡片预览的小视频（没有时长、没在播、尺寸也小），
+  // 免得在首页比手势被当成"上一集 / 调音量"。
+  function isUsableVideo(video) {
+    if (!video) return false;
+    if (Number.isFinite(video.duration) && video.duration > 0) return true;
+    if (video.currentTime > 0) return true;
+    if (!video.paused && !video.ended) return true;
+    const rect = video.getBoundingClientRect();
+    return rect.width >= 320 && rect.height >= 180;
+  }
+
+  // 汇总页面视频状态（供 popup 显示 + 后台判断"手势该不该执行"）
   function getVideoStatus() {
     const video = findMainVideo();
     return {
       type: 'STATUS',
       host: location.hostname,
       hasVideo: !!video,
+      // 是否像"真的在看视频"，后台的动作闸门用它
+      usable: isUsableVideo(video),
       playing: video ? !video.paused && !video.ended : false,
       volume: video ? video.volume : 0,
-      muted: video ? video.muted : false
+      muted: video ? video.muted : false,
+      // 是不是 B 站首页（数字手势只在首页生效）。
+      // 跟着状态一起回传，后台每次刷新就能拿到最新值 ——
+      // 以前只在"页面类型变化"时推一次，引擎重启后就一直是旧的
+      isBiliHome: isBiliHome()
     };
   }
 

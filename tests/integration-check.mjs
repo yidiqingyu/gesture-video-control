@@ -229,10 +229,11 @@ for (const [js, html] of [['popup.js', 'popup.html'], ['grant.js', 'grant.html']
 
   const textFiles = [
     'manifest.json', 'background.js', 'health.js', 'gesture.js', 'gesture-catalog.js',
-    'content.js', 'offscreen.js', 'offscreen.html', 'popup.js', 'popup.html', 'popup.css',
-    'float.js', 'float.html', 'float.css', 'grant.js', 'grant.html', 'README.md',
-    '.gitignore', 'AGENTS.md', 'tests/run-all.mjs', 'tests/integration-check.mjs',
-    'tests/gesture-selftest.mjs', 'tests/engine-sim.mjs', 'tests/health-selftest.mjs',
+    'action-policy.js', 'content.js', 'offscreen.js', 'offscreen.html', 'popup.js',
+    'popup.html', 'popup.css', 'float.js', 'float.html', 'float.css',
+    'grant.js', 'grant.html', 'README.md', '.gitignore', 'AGENTS.md',
+    'tests/run-all.mjs', 'tests/integration-check.mjs', 'tests/gesture-selftest.mjs',
+    'tests/engine-sim.mjs', 'tests/health-selftest.mjs', 'tests/policy-selftest.mjs',
     'tests/hand-model.mjs', 'tests/gesture-inspect.mjs'
   ];
   for (const file of textFiles) {
@@ -283,6 +284,53 @@ for (const [js, html] of [['popup.js', 'popup.html'], ['grant.js', 'grant.html']
   const out = Escaped.toHTML();
   record('8-手势表', '渲染时对特殊字符做了转义',
     out.indexOf('<b>') === -1 && out.indexOf('&lt;b&gt;') !== -1, { head: out.slice(0, 100) });
+}
+
+// ---------- 9. 动作闸门：引擎发出的每个动作都要在 action-policy 里分好类 ----------
+// 加了新动作却忘了分类，就会绕过「没在放视频就别执行观看类手势」这道闸门。
+{
+  const Policy = new Function(read('action-policy.js') + '\n;return globalThis.ActionPolicy;')();
+  const text = read('offscreen.js');
+
+  // 只看 triggerAction(...) 参数里"长得像动作名"的字面量（下划线小写）：
+  // 手势名（OK / 点赞 / 🤟 / 双手点赞 …）不是动作，不参与判定
+  const ACTION_LIKE = /^[a-z][a-z0-9]*_[a-z0-9_]+$/;
+  const found = new Set();
+  for (const call of text.matchAll(/triggerAction\(([^)]*)\)/g)) {
+    for (const lit of call[1].matchAll(/'([^']*)'/g)) {
+      const value = lit[1];
+      if (value.endsWith('_')) {
+        // 'num_' 这种前缀：展开成闸门表里对应的具体动作
+        for (const action of Policy.PAGE_ACTIONS) {
+          if (action.indexOf(value) === 0) found.add(action);
+        }
+      } else if (ACTION_LIKE.test(value)) {
+        found.add(value);
+      }
+    }
+  }
+
+  record('9-动作闸门', '引擎里识别出足够多的动作（' + found.size + ' 个）', found.size >= 6,
+    { actions: Array.from(found).sort() });
+  for (const action of found) {
+    record('9-动作闸门', '动作已分类：' + action, Policy.isKnown(action), { action });
+  }
+  // 反向：闸门表里的动作应当都在引擎里真的用到（避免表里留下死条目）
+  for (const action of Policy.VIDEO_ACTIONS.concat(Policy.FEED_ACTIONS)) {
+    record('9-动作闸门', '闸门表里的 ' + action + ' 在引擎里有用到',
+      text.indexOf("'" + action + "'") !== -1, { action });
+  }
+  record('9-动作闸门', 'offscreen.html 加载了 action-policy.js',
+    read('offscreen.html').indexOf('action-policy.js') !== -1, {});
+  record('9-动作闸门', 'offscreen.js 取到了 ActionPolicy',
+    /const ActionPolicy = globalThis\.ActionPolicy/.test(text), {});
+  // 最关键的一条：动作统一在 triggerAction 里过闸门，任何分支都绕不过去
+  {
+    const body = text.slice(text.indexOf('async function triggerAction'));
+    const head = body.slice(0, body.indexOf('try {'));
+    record('9-动作闸门', 'triggerAction 内部统一过闸门（忘了在分支里判断也漏不掉）',
+      /actionGate\(action/.test(head), { head: head.slice(0, 200) });
+  }
 }
 
 // ---------- 汇总 ----------

@@ -9,6 +9,7 @@ import './integration-check.mjs';
 import './gesture-selftest.mjs';
 import './engine-sim.mjs';
 import './health-selftest.mjs';
+import './policy-selftest.mjs';
 
 console.log('\n================ 全部自测结束 ================');
 if (process.exitCode) {

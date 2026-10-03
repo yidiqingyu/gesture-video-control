@@ -16,6 +16,7 @@ import { FilesetResolver, HandLandmarker } from './vendor/mediapipe/vision_bundl
 'use strict';
 
 const GestureMath = globalThis.GestureMath;
+const ActionPolicy = globalThis.ActionPolicy;
 
 // ---------- 元素与状态 ----------
 const els = {
@@ -58,6 +59,16 @@ const state = {
   gpuFallbackTimer: null,// GPU 无检测结果时自动切 CPU 的定时器
   errorText: '',
   videoStatus: { text: '正在检测当前页面…', kind: '' },
+  // 页面视频状态：决定"观看类手势"能不能执行（见 action-policy.js）
+  //   hasVideo    —— 页面上有没有 <video> 元素
+  //   videoUsable —— 是否像"真的在看的播放器"（挡掉首页卡片预览那种小视频）
+  //   null 表示还没探测到：这时一律放行，避免探测失败把扩展变成不响应
+  hasVideo: null,
+  videoUsable: null,
+  statusRefreshing: false,
+  lastStatusRefreshAt: 0,
+  hintText: '',          // 闸门挡下动作时给用户看的提示
+  hintUntil: 0,          // 提示至少显示到这个时间点
   // ---------- 自动恢复相关 ----------
   lastFrameAt: 0,        // 上一帧处理完成的时间（诊断：判断识别循环是不是停了）
   lastVideoTime: -1,     // 摄像头画面上一帧的时间戳（判断画面是不是卡住了）
@@ -75,6 +86,9 @@ const SINGLE_LIKE_CONFIRM_FRAMES = 6;
 // 这里只要再确认 2 帧即可。两段加起来最坏约 5 帧（≈170ms），
 // 比旧版单靠 3 帧抗抖得多，又不会让人觉得迟钝。
 const STABLE_FRAMES = 2;
+// 每隔多久重新问一次"当前页面在放视频吗"：
+// 手势闸门靠它判断该不该执行观看类手势，太慢会导致刚打开视频时手势还不响应
+const STATUS_REFRESH_MS = 3000;
 
 // ============================================================
 // 消息处理（来自弹窗）
@@ -117,6 +131,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (typeof message.isBiliHome === 'boolean') {
         state.isBiliHome = message.isBiliHome;
       }
+      // 顺便重新探测一次：page path 变了往往也意味着视频没了 / 换了
+      refreshVideoStatus();
       sendResponse({ ok: true });
       break;
     case 'TARGET_CHANGED':
@@ -124,6 +140,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message.tabId) state.targetTabId = message.tabId;
       else state.targetTabId = null;
       if (typeof message.isBiliHome === 'boolean') state.isBiliHome = message.isBiliHome;
+      // 换了目标页：立刻重新探测（页面类型 + 有没有视频），
+      // 否则闸门和"首页数字选视频"会拿旧页面的状态做判断
+      state.hasVideo = null;
+      state.videoUsable = null;
+      refreshVideoStatus();
       sendResponse({ ok: true });
       break;
     case 'OFFSCREEN_RESTART':
@@ -332,6 +353,12 @@ async function processFrame() {
   }
   // 摄像头看门狗：画面卡住就自动重启（跟模型是否加载好无关）
   checkCameraProgress();
+  // 定时刷新"当前页面在放视频吗"：动作闸门要用它，
+  // 也顺便让弹窗 / 悬浮面板上的视频状态保持最新
+  if (Date.now() - state.lastStatusRefreshAt >= STATUS_REFRESH_MS) {
+    state.lastStatusRefreshAt = Date.now();
+    refreshVideoStatus();
+  }
   if (!state.processing && state.hands && els.camera.readyState >= 2) {
     state.processing = true;
     try {
@@ -501,6 +528,9 @@ function onHandsResults(results) {
   }
   if (state.phoneLocked && pose.name !== '666') {
     setGesture('🔒 已锁定', '手势操作已暂停，比出 666 手势保持 1.5 秒解锁');
+  } else if (currentHint()) {
+    // 刚被闸门挡下来：把原因显示出来（粘 2.5 秒，不然下一帧就被覆盖了）
+    setGesture(pose.name, currentHint());
   } else {
     setGesture(pose.name, pose.detail + '（检测到 ' + hands.length + ' 只手）');
   }
@@ -548,9 +578,11 @@ function onHandsResults(results) {
     state.singleLikeFrames = 0; // 确认是双手，取消待定的单手点赞
     setGesture('双手点赞', '两只手都竖起大拇指（检测到 ' + hands.length + ' 只手）→ 一键三连');
     if (state.bothLikeFrames >= 3 && now - state.lastActionTime >= state.debounceMs) {
-      state.lastActionTime = now;
-      state.bothLikeFrames = 0;
-      triggerAction('like3', '双手点赞');
+      if (actionGate('like3')) {
+        state.lastActionTime = now;
+        state.bothLikeFrames = 0;
+        triggerAction('like3', '双手点赞');
+      }
     }
     return; // 双手点赞时不再执行单手动作（避免重复点赞）
   }
@@ -610,11 +642,11 @@ function onHandsResults(results) {
   }
   state.numFrames = 0;
 
-  // OK：捏合跳变触发播放/暂停
+  // OK：捏合跳变触发播放/暂停（页面上没在放视频时不动作，只显示原因）
   if (pose.ok) {
     if (!state.okPinched && stable) {
       state.okPinched = true;
-      if (now - state.lastActionTime >= state.debounceMs) {
+      if (actionGate('play_pause') && now - state.lastActionTime >= state.debounceMs) {
         state.lastActionTime = now;
         triggerAction('play_pause', 'OK');
       }
@@ -623,11 +655,14 @@ function onHandsResults(results) {
     state.okPinched = false;
   }
 
-  // 小拇指上/下：长按连续调音量
+  // 小拇指上/下：长按连续调音量（只在真的在看视频时才有效）
   if (stable && (pose.name === '小拇指向上' || pose.name === '小拇指向下')) {
-    if (now - state.lastVolumeTime >= state.volumeRepeatMs) {
+    const volAction = pose.name === '小拇指向上' ? 'volume_up' : 'volume_down';
+    if (!actionGate(volAction)) {
+      state.lastVolumeTime = 0;
+    } else if (now - state.lastVolumeTime >= state.volumeRepeatMs) {
       state.lastVolumeTime = now;
-      triggerAction(pose.name === '小拇指向上' ? 'volume_up' : 'volume_down', pose.name);
+      triggerAction(volAction, pose.name);
     }
   } else {
     state.lastVolumeTime = 0;
@@ -637,11 +672,12 @@ function onHandsResults(results) {
   //   长视频模式 = 上一个/下一个视频；短视频模式 = 按 ↑/↓ 方向键切换视频
   if (stable && (pose.name === '食指向上' || pose.name === '食指向下') &&
       now - state.lastActionTime >= state.debounceMs) {
-    state.lastActionTime = now;
-    if (state.shortVideoMode) {
-      triggerAction(pose.name === '食指向上' ? 'scroll_up' : 'scroll_down', pose.name);
-    } else {
-      triggerAction(pose.name === '食指向上' ? 'prev' : 'next', pose.name);
+    const indexAction = state.shortVideoMode
+      ? (pose.name === '食指向上' ? 'scroll_up' : 'scroll_down')
+      : (pose.name === '食指向上' ? 'prev' : 'next');
+    if (actionGate(indexAction)) {
+      state.lastActionTime = now;
+      triggerAction(indexAction, pose.name);
     }
   }
 
@@ -649,9 +685,11 @@ function onHandsResults(results) {
   if (pose.name === '点赞') {
     state.singleLikeFrames = (state.singleLikeFrames || 0) + 1;
     if (state.singleLikeFrames >= SINGLE_LIKE_CONFIRM_FRAMES && now - state.lastActionTime >= state.debounceMs) {
-      state.lastActionTime = now;
-      state.singleLikeFrames = 0;
-      triggerAction('like', '点赞');
+      if (actionGate('like')) {
+        state.lastActionTime = now;
+        state.singleLikeFrames = 0;
+        triggerAction('like', '点赞');
+      }
     }
   } else {
     state.singleLikeFrames = 0;
@@ -714,6 +752,8 @@ function setGesture(name, detail) {
 // ============================================================
 async function triggerAction(action, gestureName) {
   if (!state.controlOn || !state.targetTabId) return;
+  // 最后一道闸门：动作在这里统一过一遍策略，就算某个分支忘了判断也漏不掉
+  if (!actionGate(action)) return;
   try {
     // 离屏文档只能使用 chrome.runtime，因此通过 Service Worker 转发给页面
     const resp = await chrome.runtime.sendMessage({
@@ -740,8 +780,37 @@ async function triggerAction(action, gestureName) {
   notify();
 }
 
+// ============================================================
+// 动作闸门：没在放视频时，"看视频才用得上"的手势一律不执行
+// （规则表在 action-policy.js，纯逻辑、离线可测）
+// ============================================================
+// 闸门挡下来时给用户看的提示。为什么要"粘住"：每帧都会用当前手势刷新
+// 状态文字，提示如果只设一次，33 毫秒后就被人手指数覆盖了，用户根本看不见。
+function setHint(text, ms) {
+  state.hintText = text || '';
+  state.hintUntil = Date.now() + (ms || 2500);
+}
+
+function currentHint() {
+  return Date.now() < state.hintUntil ? state.hintText : '';
+}
+
+function actionGate(action) {
+  if (!ActionPolicy) return true; // 极端情况：脚本没加载，不拦
+  const verdict = ActionPolicy.check(action, {
+    videoUsable: state.videoUsable,
+    hasVideo: state.hasVideo,
+    locked: state.phoneLocked
+  });
+  if (!verdict.ok) setHint(verdict.reason);
+  return verdict.ok;
+}
+
 async function refreshVideoStatus() {
   if (!state.targetTabId) return;
+  if (state.statusRefreshing) return;
+  state.statusRefreshing = true;
+  let changed = false;
   try {
     // 同样通过 Service Worker 转发
     const resp = await chrome.runtime.sendMessage({
@@ -750,25 +819,47 @@ async function refreshVideoStatus() {
       payload: { type: 'GET_STATUS' }
     });
     if (resp && resp.type === 'STATUS') {
+      // 页面类型（是不是 B 站首页）跟着状态一起同步回来。
+      // 以前只在"页面类型变化"时才推一次，弹窗启动识别时又不带这个标志，
+      // 于是引擎里 isBiliHome 一直是 false —— 这就是"首页比 1 却变成上一集"的原因。
+      if (typeof resp.isBiliHome === 'boolean') state.isBiliHome = resp.isBiliHome;
+      state.hasVideo = !!resp.hasVideo;
+      state.videoUsable = resp.usable === undefined ? null : !!resp.usable;
       if (resp.hasVideo) {
         const vol = Math.round((resp.volume || 0) * 100);
-        state.videoStatus = {
-          text: '✅ 已检测到视频（' + resp.host + '）｜' +
-                (resp.playing ? '▶ 播放中' : '⏸ 已暂停') +
-                '｜音量 ' + vol + '%' +
-                (resp.muted ? '｜🔇 已静音' : ''),
-          kind: 'ok'
-        };
+        changed = setVideoStatus(
+          '✅ 已检测到视频（' + resp.host + '）｜' +
+          (resp.playing ? '▶ 播放中' : '⏸ 已暂停') +
+          '｜音量 ' + vol + '%' +
+          (resp.muted ? '｜🔇 已静音' : '') +
+          (state.videoUsable === false ? '｜（像是预览小窗，观看类手势已暂停）' : ''),
+          'ok'
+        );
       } else {
-        state.videoStatus = { text: '当前页面未检测到视频', kind: 'error' };
+        changed = setVideoStatus('当前页面未检测到视频', 'error');
       }
     } else if (resp && resp.status === 'error') {
-      state.videoStatus = { text: '无法连接页面（请重新打开扩展图标后开启）', kind: 'warn' };
+      // 连不上页面：状态置为"未知"，闸门放行（不能因为探测失败就整个失灵）
+      state.hasVideo = null;
+      state.videoUsable = null;
+      changed = setVideoStatus('无法连接页面（请重新打开扩展图标后开启）', 'warn');
     }
   } catch (e) {
-    state.videoStatus = { text: '无法连接页面（请重新打开扩展图标后开启）', kind: 'warn' };
+    state.hasVideo = null;
+    state.videoUsable = null;
+    changed = setVideoStatus('无法连接页面（请重新打开扩展图标后开启）', 'warn');
+  } finally {
+    state.statusRefreshing = false;
   }
-  notify();
+  // 状态没变就不广播，省得每 3 秒往后台灌一条消息
+  if (changed) notify();
+}
+
+// 只在文字真的变了的时候更新，返回是否变化
+function setVideoStatus(text, kind) {
+  if (state.videoStatus.text === text && state.videoStatus.kind === kind) return false;
+  state.videoStatus = { text, kind };
+  return true;
 }
 
 // ============================================================
