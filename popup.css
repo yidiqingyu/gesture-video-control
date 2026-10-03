@@ -262,6 +262,50 @@ h1 {
   transform: translateX(20px);
 }
 
+/* ---------- 手势对照表（点击展开） ---------- */
+.gesture-help {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 0;
+  border: 1px solid #3a4a63;
+  border-radius: 10px;
+  background: transparent;
+  color: #b9c7dd;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.gesture-help:hover {
+  background: #1b2a44;
+  color: #e8eef7;
+}
+
+.gesture-help-body {
+  margin-top: 8px;
+  padding: 4px 10px 8px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: #16233a;
+  border-radius: 12px;
+  /* 手势列表的 .gh-* 样式由 gesture-catalog.js 注入 */
+}
+
+.gesture-help-body[hidden] {
+  display: none;
+}
+
+.gesture-help-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.gesture-help-body::-webkit-scrollbar-thumb {
+  background: #3a4a63;
+  border-radius: 4px;
+}
+
 /* ---------- 底部提示 ---------- */
 .hint {
   font-size: 11px;

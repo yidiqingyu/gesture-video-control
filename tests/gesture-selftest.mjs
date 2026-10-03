@@ -26,17 +26,33 @@ let passed = 0;
 const failures = [];
 const groups = new Map();
 
-function record(group, ok, label, extra) {
-  if (!ok) failures.push({ group, label, extra });
-  else passed += 1;
+// ⚠️ 约定：record(分组, 说明, 条件, 附加信息) —— 条件是第三个参数。
+// 写成 record(分组, 条件, 说明) 会让"说明字符串"落到条件位置、永远为真，
+// 检查就全变成"永远通过"。文件开头的「0-断言器自检」专门盯着这件事。
+function record(group, label, ok, extra) {
   if (!groups.has(group)) groups.set(group, { ok: 0, total: 0 });
   const g = groups.get(group);
   g.total += 1;
-  if (ok) g.ok += 1;
+  if (ok) {
+    g.ok += 1;
+    passed += 1;
+  } else {
+    failures.push({ group, label, extra });
+  }
 }
 
 function check(group, label, actual, expected) {
-  record(group, actual === expected, label, { actual, expected });
+  record(group, label, actual === expected, { actual, expected });
+}
+
+// 断言器自检：故意喂一个假条件，确认真的会被记为失败
+{
+  const before = failures.length;
+  record('0-断言器自检', '（内部探测，这一条必须被判定为失败）', false, {});
+  const works = failures.length === before + 1;
+  if (works) failures.pop();
+  groups.delete('0-断言器自检');
+  record('0-断言器自检', '断言器能识别失败（否则所有检查都是白做）', works, {});
 }
 
 function classify(poseName, opts) {

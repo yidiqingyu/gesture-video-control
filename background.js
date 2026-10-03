@@ -172,7 +172,7 @@ async function ensureScriptIn(tabId) {
   if (!tabId) return false;
   if (await pingTab(tabId)) return true;
   try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['gesture-catalog.js', 'content.js'] });
   } catch (e) {
     return false;
   }
@@ -618,7 +618,7 @@ function switchControlTab(tabId) {
   currentIsBiliHome = false;
   chrome.scripting.executeScript({
     target: { tabId },
-    files: ['content.js']
+    files: ['gesture-catalog.js', 'content.js']
   }).catch(() => {});
   chrome.runtime.sendMessage({
     type: 'TARGET_CHANGED',
@@ -639,7 +639,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (tabId === controlTabId) {
     chrome.scripting.executeScript({
       target: { tabId },
-      files: ['content.js']
+      files: ['gesture-catalog.js', 'content.js']
     }).catch(() => {});
     currentIsBiliHome = false;
     chrome.runtime.sendMessage({ type: 'TARGET_CHANGED', tabId, isBiliHome: false }).catch(() => {});

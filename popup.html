@@ -54,6 +54,10 @@
     <span class="switch-track"><span class="switch-thumb"></span></span>
   </label>
 
+  <!-- 手势对照表（点击展开，内容由 gesture-catalog.js 提供） -->
+  <button id="gesture-help" class="gesture-help" aria-expanded="false">📖 手势对照表</button>
+  <div id="gesture-help-body" class="gesture-help-body" hidden></div>
+
   <p class="hint">
     💡 识别在<strong>后台</strong>运行：开启后可关闭本弹窗，不影响手势控制。<br>
     摄像头使用时，工具栏会显示相机使用指示。<br>
@@ -62,6 +66,7 @@
   </p>
 
   <!-- 弹窗只负责遥控与状态显示；识别引擎在 offscreen.html 中运行 -->
+  <script src="gesture-catalog.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

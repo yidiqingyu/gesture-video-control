@@ -405,7 +405,7 @@ async function ensureContentScript() {
     try {
       await chrome.scripting.executeScript({
         target: { tabId: state.tabId },
-        files: ['content.js']
+        files: ['gesture-catalog.js', 'content.js']
       });
       return true;
     } catch (err) {

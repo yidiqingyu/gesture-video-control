@@ -29,7 +29,9 @@ const els = {
   videoStatus: document.getElementById('video-status'),
   healthStatus: document.getElementById('health-status'),
   toggle: document.getElementById('control-toggle'),
-  shortToggle: document.getElementById('short-toggle')
+  shortToggle: document.getElementById('short-toggle'),
+  gestureHelp: document.getElementById('gesture-help'),
+  gestureHelpBody: document.getElementById('gesture-help-body')
 };
 
 // ---------- 状态 ----------
@@ -75,6 +77,7 @@ function init() {
   if (els.shortToggle) {
     els.shortToggle.addEventListener('change', onShortToggleChange);
   }
+  initGestureHelp();
   if (els.grantButton) {
     els.grantButton.addEventListener('click', onGrantClick);
   }
@@ -292,7 +295,7 @@ async function ensureContentScript() {
     try {
       await chrome.scripting.executeScript({
         target: { tabId: state.activeTabId },
-        files: ['content.js']
+        files: ['gesture-catalog.js', 'content.js']
       });
       return true;
     } catch (err) {
@@ -446,6 +449,36 @@ function onCameraResizeDown(e) {
   document.addEventListener('mouseup', onUp);
   document.body.classList.add('resizing');
   e.preventDefault();
+}
+
+// ============================================================
+// 手势对照表（点击展开 / 收起）
+// 手势数据、HTML 渲染、配套样式都来自 gesture-catalog.js，
+// 和页面内悬浮面板共用同一份 —— 改一处两边都对。
+// ============================================================
+function initGestureHelp() {
+  if (!els.gestureHelp || !els.gestureHelpBody) return;
+  if (typeof GestureCatalog === 'undefined') return; // 数据文件没加载就安静跳过
+  const style = document.createElement('style');
+  style.textContent = GestureCatalog.css();
+  document.head.appendChild(style);
+  els.gestureHelpBody.innerHTML = GestureCatalog.toHTML();
+
+  els.gestureHelp.addEventListener('click', () => {
+    setGestureHelpOpen(els.gestureHelpBody.hidden);
+  });
+  // 记住上次是展开还是收起，看视频时不用每次再点一下
+  chrome.storage.local.get('gestureHelpOpen', (saved) => {
+    if (saved && saved.gestureHelpOpen) setGestureHelpOpen(true);
+  });
+}
+
+function setGestureHelpOpen(open) {
+  if (!els.gestureHelp || !els.gestureHelpBody) return;
+  els.gestureHelpBody.hidden = !open;
+  els.gestureHelp.textContent = open ? '📖 收起手势对照表' : '📖 手势对照表';
+  els.gestureHelp.setAttribute('aria-expanded', open ? 'true' : 'false');
+  chrome.storage.local.set({ gestureHelpOpen: !!open }).catch(() => {});
 }
 
 // 打开悬浮面板：在当前页面注入可拖动 / 缩放 / 隐藏画面的悬浮面板

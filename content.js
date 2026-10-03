@@ -649,7 +649,13 @@
     panelHost.id = 'gesture-video-control-panel-host';
     panelShadow = panelHost.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
-    style.textContent = panelCss();
+    // 手势对照表的数据/渲染/样式在 gesture-catalog.js 里，和弹窗共用同一份
+    const catalogCss = globalThis.GestureCatalog ? globalThis.GestureCatalog.css() : '';
+    const helpCss = `
+      .gvc-help { border-top: 1px solid #e6eaf2; padding-top: 8px; }
+      .gvc-help[hidden] { display: none; }
+    `;
+    style.textContent = panelCss() + catalogCss + helpCss;
     panelShadow.appendChild(style);
 
     const root = document.createElement('div');
@@ -657,6 +663,7 @@
     root.innerHTML = `
       <div class="gvc-bar">
         <span class="gvc-title">🎮 手势视频控制</span>
+        <button data-act="help" title="手势对照表">📖</button>
         <button data-act="preview" title="显示 / 隐藏摄像头画面">👁</button>
         <button data-act="min" title="最小化">—</button>
         <button data-act="close" title="关闭悬浮面板">✕</button>
@@ -678,6 +685,7 @@
         <div class="gvc-status">正在连接后台识别…</div>
         <label class="gvc-row"><span>手势控制</span><input type="checkbox" data-ctl="control"></label>
         <label class="gvc-row"><span>短视频模式</span><input type="checkbox" data-ctl="short"></label>
+        <div class="gvc-help" hidden></div>
       </div>
       <div class="gvc-resize"></div>
     `;
@@ -872,6 +880,19 @@
         drag = null;
       }
     });
+
+    // 手势对照表：点标题栏的 📖 展开 / 收起（内容来自 gesture-catalog.js）
+    const helpBtn = root.querySelector('[data-act="help"]');
+    const helpBox = root.querySelector('.gvc-help');
+    if (helpBox && globalThis.GestureCatalog) {
+      helpBox.innerHTML = globalThis.GestureCatalog.toHTML();
+    }
+    if (helpBtn && helpBox) {
+      helpBtn.addEventListener('click', () => {
+        helpBox.hidden = !helpBox.hidden;
+        helpBtn.style.background = helpBox.hidden ? '' : 'rgba(255,255,255,.32)';
+      });
+    }
 
     root.querySelector('[data-act="preview"]').addEventListener('click', () => {
       root.querySelector('.gvc-preview-wrap').classList.toggle('hidden');
