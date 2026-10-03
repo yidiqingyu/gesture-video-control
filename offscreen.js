@@ -32,8 +32,7 @@ const state = {
   processing: false,     // 防止同一帧重复处理
   lastActionTime: 0,     // 一次性手势防抖
   lastVolumeTime: 0,     // 音量长按重复
-  stablePose: '',
-  stableFrames: 0,
+  tracker: null,         // 逐帧追踪器（挑主手 + 判定 + 平滑 + 稳定确认）
   singleLikeFrames: 0,
   bothLikeFrames: 0,      // 双手同时点赞的连续帧数（一键三连用）
   okPinched: false,      // OK 手势捏合跳变检测
@@ -66,6 +65,10 @@ const state = {
 const FOUND_HAND_MIN_FRAMES = 3;
 const LOST_HAND_MIN_FRAMES = 6;
 const SINGLE_LIKE_CONFIRM_FRAMES = 6;
+// 判定用的「稳定帧」：姿态平滑器（最近 5 帧多数投票）已经在做时间维度的过滤，
+// 这里只要再确认 2 帧即可。两段加起来最坏约 5 帧（≈170ms），
+// 比旧版单靠 3 帧抗抖得多，又不会让人觉得迟钝。
+const STABLE_FRAMES = 2;
 
 // ============================================================
 // 消息处理（来自弹窗）
@@ -132,6 +135,8 @@ async function startEngine() {
   if (state.running) return;
   state.running = true;
   state.errorText = '';
+  // 每次重新开始都用全新的追踪器，避免拿旧状态判断
+  state.tracker = GestureMath.createPoseTracker({ stableFrames: STABLE_FRAMES });
   notify();
   try {
     if (!state.cameraStream) {
@@ -194,9 +199,11 @@ async function loadHandsModel() {
       baseOptions: baseOptions,
       runningMode: 'VIDEO',
       numHands: 2,
-      minHandDetectionConfidence: 0.4,
-      minHandPresenceConfidence: 0.4,
-      minTrackingConfidence: 0.4
+      // 置信度比旧版（0.4）略高：背景/身体被误检成「手」会直接造成误触发，
+      // 官方默认值就是 0.5，这里取 0.45 兼顾灵敏度
+      minHandDetectionConfidence: 0.45,
+      minHandPresenceConfidence: 0.45,
+      minTrackingConfidence: 0.5
     };
     // GPU 优先；部分显卡/驱动上 GPU 委托失败时自动回退 CPU
     let landmarker;
@@ -286,9 +293,9 @@ function scheduleGpuFallback() {
         },
         runningMode: 'VIDEO',
         numHands: 2,
-        minHandDetectionConfidence: 0.4,
-        minHandPresenceConfidence: 0.4,
-        minTrackingConfidence: 0.4
+        minHandDetectionConfidence: 0.45,
+        minHandPresenceConfidence: 0.45,
+        minTrackingConfidence: 0.5
       });
       state.hands = landmarker;
       state.errorText = '';
@@ -303,12 +310,60 @@ function scheduleGpuFallback() {
 // ============================================================
 // 手势分类与动作触发（防抖 / 稳定帧 / 连续调节）
 // ============================================================
+
+// 当前画面的宽高比。手势判定要把归一化坐标换算成等尺度，
+// 必须知道真实宽高比（640×480 和 1280×720 的换算完全不同）
+function frameAspect() {
+  const w = els.camera.videoWidth;
+  const h = els.camera.videoHeight;
+  return w > 0 && h > 0 ? w / h : 4 / 3;
+}
+
+// 把 MediaPipe 的原始结果整理成「每只手一个对象」，
+// 顺便带上世界坐标（判伸展度更准）和左右手标签（挑主手用）
+function buildCandidates(results) {
+  const lms = (results && results.landmarks) || [];
+  const worlds = (results && results.worldLandmarks) || [];
+  const handed = (results && (results.handednesses || results.handedness)) || [];
+  const list = [];
+  for (let i = 0; i < lms.length; i += 1) {
+    const lm = lms[i];
+    if (!lm || lm.length < 21) continue;
+    const cat = handed[i] && handed[i][0];
+    list.push({
+      landmarks: lm,
+      worldLandmarks: worlds[i] && worlds[i].length >= 21 ? worlds[i] : null,
+      handedness: (cat && cat.categoryName) || '',
+      score: cat && typeof cat.score === 'number' ? cat.score : 0
+    });
+  }
+  return list;
+}
+
+// 单手判定（双手手势用）：和主判定走同一套参数，避免两处判法不一致
+function poseNameOf(candidate) {
+  return GestureMath.classifyPose(candidate.landmarks, {
+    aspect: frameAspect(),
+    world: candidate.worldLandmarks
+  }).name;
+}
+
+function indexExtOf(candidate) {
+  return GestureMath.fingerExt(candidate.landmarks, 'index', {
+    aspect: frameAspect(),
+    world: candidate.worldLandmarks
+  });
+}
+
 function onHandsResults(results) {
   if (!state.running) return;
 
-  // 新版 HandLandmarker 的结果结构：results.landmarks = [每只手的 21 个关键点]
-  const hands = results && results.landmarks;
-  if (!hands || hands.length === 0) {
+  // 新版 HandLandmarker 的结果结构：
+  //   results.landmarks      = [每只手的 21 个归一化图像关键点]
+  //   results.worldLandmarks = [每只手的 21 个米制 3D 关键点]（判伸展度更准）
+  //   results.handednesses   = [每只手的左右手标签 + 置信度]
+  const hands = buildCandidates(results);
+  if (hands.length === 0) {
     state.handFoundFrames = 0;
     state.handLostFrames += 1;
     // 偶发漏检（一两帧没跟上）不立即切换显示，避免 UI 闪烁
@@ -323,10 +378,10 @@ function onHandsResults(results) {
     state.palmHoldTriggered = false;
     state.phoneHoldStart = null;
     state.phoneHoldTriggered = false;
-    state.stablePose = '';
-    state.stableFrames = 0;
     state.bothLikeFrames = 0;
     state.singleLikeFrames = 0;
+    // 确认手真的没了，追踪器的平滑窗口和主手记忆一起清空
+    if (state.tracker) state.tracker.reset();
     return;
   }
 
@@ -335,8 +390,12 @@ function onHandsResults(results) {
   // 刚“出现”的手需要连续几帧确认，过滤身体误检的闪现
   if (state.handFoundFrames < FOUND_HAND_MIN_FRAMES) return;
 
-  const lm = hands[0];
-  const pose = GestureMath.classifyPose(lm);
+  // 挑主手 → 判定 → 平滑 → 稳定确认（gesture.js 里的共享实现）
+  if (!state.tracker) state.tracker = GestureMath.createPoseTracker({ stableFrames: STABLE_FRAMES });
+  const track = state.tracker.update(hands, { aspect: frameAspect() });
+  if (!track) return;
+  const pose = track.pose;
+
   if (!state.handDetected) {
     state.handDetected = true;
     if (state.gpuFallbackTimer) {
@@ -351,13 +410,7 @@ function onHandsResults(results) {
     setGesture(pose.name, pose.detail + '（检测到 ' + hands.length + ' 只手）');
   }
 
-  if (pose.name === state.stablePose) {
-    state.stableFrames += 1;
-  } else {
-    state.stablePose = pose.name;
-    state.stableFrames = 1;
-  }
-  const stable = state.stableFrames >= 3;
+  const stable = track.stable;
   const now = Date.now();
 
   // 666 手势：保持 1.5 秒锁定 / 解锁（锁定期间其它手势一律不执行操作）
@@ -394,7 +447,7 @@ function onHandsResults(results) {
   }
 
   // 双手同时竖大拇指 → 一键三连（稳定 3 帧 + 防抖，触发后需松手重比）
-  const likeCount = hands.filter((h) => GestureMath.classifyPose(h).name === '点赞').length;
+  const likeCount = hands.filter((h) => poseNameOf(h) === '点赞').length;
   if (likeCount >= 2) {
     state.bothLikeFrames = (state.bothLikeFrames || 0) + 1;
     state.singleLikeFrames = 0; // 确认是双手，取消待定的单手点赞
@@ -410,14 +463,16 @@ function onHandsResults(results) {
 
   // 双手食指交叉 → 关闭当前页面（两只手的食指都伸直，
   // 食指线段相交（X 型交叉）或两指尖相触都算）
-  const indexExtended = (h) => GestureMath.extensionScore(h, 8, 6, 5) > 1.5;
-  const indexHands = hands.filter(indexExtended);
+  const indexHands = hands.filter((h) => indexExtOf(h) > GestureMath.THRESHOLDS.EXT_STRONG);
   if (indexHands.length >= 2) {
-    const h1 = indexHands[0];
-    const h2 = indexHands[1];
-    const szMax = Math.max(GestureMath.handSize(h1), GestureMath.handSize(h2));
-    const tipDist = GestureMath.dist(h1[8], h2[8]);
-    const crossed = GestureMath.segmentsIntersect(h1[5], h1[8], h2[5], h2[8]) ||
+    const h1 = indexHands[0].landmarks;
+    const h2 = indexHands[1].landmarks;
+    const a = frameAspect();
+    const m1 = GestureMath.imageMetrics(h1, a);
+    const m2 = GestureMath.imageMetrics(h2, a);
+    const szMax = Math.max(GestureMath.handSize(m1), GestureMath.handSize(m2));
+    const tipDist = GestureMath.dist(m1[8], m2[8]);
+    const crossed = GestureMath.segmentsIntersect(m1[5], m1[8], m2[5], m2[8]) ||
                     tipDist < szMax * 0.3;
     if (crossed) {
       state.crossFrames = (state.crossFrames || 0) + 1;

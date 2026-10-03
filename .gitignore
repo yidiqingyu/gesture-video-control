@@ -8,3 +8,9 @@
 Thumbs.db
 .DS_Store
 *.log
+
+# 只在本机存在的临时区：不删除文件时用来挪走东西（见 AGENTS.md 安全红线）
+trash/
+
+# 本机的文件权限备份与回滚脚本（换机器/换账号后没有意义，不必进仓库）
+memory/acl-recovery/

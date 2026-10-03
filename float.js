@@ -61,8 +61,7 @@ const state = {
   gpuFallbackTimer: null,
   lastActionTime: 0,
   lastVolumeTime: 0,
-  stablePose: '',
-  stableFrames: 0,
+  tracker: null,         // 逐帧追踪器（挑主手 + 判定 + 平滑 + 稳定确认）
   singleLikeFrames: 0,
   bothLikeFrames: 0,      // 双手同时点赞的连续帧数（一键三连用）
   okPinched: false,      // OK 手势捏合跳变检测
@@ -82,6 +81,9 @@ const state = {
 const FOUND_HAND_MIN_FRAMES = 3;
 const LOST_HAND_MIN_FRAMES = 6;
 const SINGLE_LIKE_CONFIRM_FRAMES = 6;
+// 判定用的「稳定帧」：姿态平滑器（最近 5 帧多数投票）已经在做时间维度的过滤，
+// 这里只要再确认 2 帧即可。两段加起来最坏约 5 帧（≈170ms）。
+const STABLE_FRAMES = 2;
 
 const WIN_W = 300;
 const WIN_H = 480;
@@ -517,6 +519,8 @@ async function startRecognition() {
     return;
   }
   state.recRunning = true;
+  // 每次重新开始都用全新的追踪器，避免拿旧状态判断
+  state.tracker = GestureMath.createPoseTracker({ stableFrames: STABLE_FRAMES });
   // 暂停后台离屏引擎，避免两处同时触发动作
   sendToBackground({ type: 'OFFSCREEN_STOP' });
   setModelStatus('⏳ 正在启动识别引擎…');
@@ -554,9 +558,11 @@ async function startRecognition() {
       baseOptions: baseOptions,
       runningMode: 'VIDEO',
       numHands: 2,
-      minHandDetectionConfidence: 0.4,
-      minHandPresenceConfidence: 0.4,
-      minTrackingConfidence: 0.4
+      // 置信度比旧版（0.4）略高：背景/身体被误检成「手」会直接造成误触发，
+      // 官方默认值就是 0.5，这里取 0.45 兼顾灵敏度
+      minHandDetectionConfidence: 0.45,
+      minHandPresenceConfidence: 0.45,
+      minTrackingConfidence: 0.5
     };
     let landmarker;
     let usedCpu = false;
@@ -651,9 +657,9 @@ function scheduleRecCpuFallback() {
         },
         runningMode: 'VIDEO',
         numHands: 2,
-        minHandDetectionConfidence: 0.4,
-        minHandPresenceConfidence: 0.4,
-        minTrackingConfidence: 0.4
+        minHandDetectionConfidence: 0.45,
+        minHandPresenceConfidence: 0.45,
+        minTrackingConfidence: 0.5
       });
       if (state.landmarker) {
         try { state.landmarker.close(); } catch (e) { /* 忽略 */ }
@@ -688,9 +694,52 @@ function recLoop() {
   state.recTimer = setTimeout(recLoop, 33);
 }
 
+// ---------- 手势判定辅助（和后台引擎保持同一套参数）----------
+// 当前画面的宽高比：手势判定要把归一化坐标换算成等尺度，必须知道真实宽高比
+function frameAspect() {
+  const w = els.recVideo.videoWidth;
+  const h = els.recVideo.videoHeight;
+  return w > 0 && h > 0 ? w / h : 4 / 3;
+}
+
+// 把 MediaPipe 的原始结果整理成「每只手一个对象」，
+// 顺便带上世界坐标（判伸展度更准）和左右手标签（挑主手用）
+function buildCandidates(result) {
+  const lms = (result && result.landmarks) || [];
+  const worlds = (result && result.worldLandmarks) || [];
+  const handed = (result && (result.handednesses || result.handedness)) || [];
+  const list = [];
+  for (let i = 0; i < lms.length; i += 1) {
+    const lm = lms[i];
+    if (!lm || lm.length < 21) continue;
+    const cat = handed[i] && handed[i][0];
+    list.push({
+      landmarks: lm,
+      worldLandmarks: worlds[i] && worlds[i].length >= 21 ? worlds[i] : null,
+      handedness: (cat && cat.categoryName) || '',
+      score: cat && typeof cat.score === 'number' ? cat.score : 0
+    });
+  }
+  return list;
+}
+
+function poseNameOf(candidate) {
+  return GestureMath.classifyPose(candidate.landmarks, {
+    aspect: frameAspect(),
+    world: candidate.worldLandmarks
+  }).name;
+}
+
+function indexExtOf(candidate) {
+  return GestureMath.fingerExt(candidate.landmarks, 'index', {
+    aspect: frameAspect(),
+    world: candidate.worldLandmarks
+  });
+}
+
 function handleRecResult(result) {
-  const hands = result && result.landmarks;
-  if (!hands || hands.length === 0) {
+  const hands = buildCandidates(result);
+  if (hands.length === 0) {
     state.handFoundFrames = 0;
     state.handLostFrames += 1;
     // 偶发漏检（一两帧没跟上）不立即切换显示，避免 UI 闪烁
@@ -702,10 +751,10 @@ function handleRecResult(result) {
     state.palmHoldTriggered = false;
     state.phoneHoldStart = null;
     state.phoneHoldTriggered = false;
-    state.stablePose = '';
-    state.stableFrames = 0;
     state.bothLikeFrames = 0;
     state.singleLikeFrames = 0;
+    // 确认手真的没了，追踪器的平滑窗口和主手记忆一起清空
+    if (state.tracker) state.tracker.reset();
     return;
   }
 
@@ -714,22 +763,20 @@ function handleRecResult(result) {
   // 刚“出现”的手需要连续几帧确认，过滤身体误检的闪现
   if (state.handFoundFrames < FOUND_HAND_MIN_FRAMES) return;
 
-  const lm = hands[0];
-  drawLandmarks(lm);
-  const pose = GestureMath.classifyPose(lm);
+  // 挑主手 → 判定 → 平滑 → 稳定确认（gesture.js 里的共享实现）
+  if (!state.tracker) state.tracker = GestureMath.createPoseTracker({ stableFrames: STABLE_FRAMES });
+  const track = state.tracker.update(hands, { aspect: frameAspect() });
+  if (!track) return;
+  const pose = track.pose;
+  drawLandmarks(track.hand.landmarks);
+
   if (state.phoneLocked && pose.name !== '666') {
   setGestureLocal('🔒 已锁定', '手势操作已暂停，比出 666 手势保持 1.5 秒解锁');
   } else {
     setGestureLocal(pose.name, pose.detail + '（检测到 ' + hands.length + ' 只手）');
   }
 
-  if (pose.name === state.stablePose) {
-    state.stableFrames += 1;
-  } else {
-    state.stablePose = pose.name;
-    state.stableFrames = 1;
-  }
-  const stable = state.stableFrames >= 3;
+  const stable = track.stable;
   const now = Date.now();
 
   // 666 手势：保持 1.5 秒锁定 / 解锁（锁定期间其它手势一律不执行操作）
@@ -766,7 +813,7 @@ function handleRecResult(result) {
   }
 
   // 双手同时竖大拇指 → 一键三连（稳定 3 帧 + 防抖，触发后需松手重比）
-  const likeCount = hands.filter((h) => GestureMath.classifyPose(h).name === '点赞').length;
+  const likeCount = hands.filter((h) => poseNameOf(h) === '点赞').length;
   if (likeCount >= 2) {
     state.bothLikeFrames = (state.bothLikeFrames || 0) + 1;
     state.singleLikeFrames = 0; // 确认是双手，取消待定的单手点赞
@@ -782,14 +829,14 @@ function handleRecResult(result) {
 
   // 双手食指交叉 → 关闭当前页面（两只手的食指都伸直，
   // 食指线段相交（X 型交叉）或两指尖相触都算）
-  const indexExtended = (h) => GestureMath.extensionScore(h, 8, 6, 5) > 1.5;
-  const indexHands = hands.filter(indexExtended);
+  const indexHands = hands.filter((h) => indexExtOf(h) > GestureMath.THRESHOLDS.EXT_STRONG);
   if (indexHands.length >= 2) {
-    const h1 = indexHands[0];
-    const h2 = indexHands[1];
-    const szMax = Math.max(GestureMath.handSize(h1), GestureMath.handSize(h2));
-    const tipDist = GestureMath.dist(h1[8], h2[8]);
-    const crossed = GestureMath.segmentsIntersect(h1[5], h1[8], h2[5], h2[8]) ||
+    const a = frameAspect();
+    const m1 = GestureMath.imageMetrics(indexHands[0].landmarks, a);
+    const m2 = GestureMath.imageMetrics(indexHands[1].landmarks, a);
+    const szMax = Math.max(GestureMath.handSize(m1), GestureMath.handSize(m2));
+    const tipDist = GestureMath.dist(m1[8], m2[8]);
+    const crossed = GestureMath.segmentsIntersect(m1[5], m1[8], m2[5], m2[8]) ||
                     tipDist < szMax * 0.3;
     if (crossed) {
       state.crossFrames = (state.crossFrames || 0) + 1;
@@ -883,7 +930,6 @@ function handleRecResult(result) {
   if (stable && pose.name === '🤟' && now - state.lastActionTime >= state.debounceMs) {
     state.lastActionTime = now;
     sendAction('bili_refresh', '🤟');
-  }
   }
 
   // 握拳：不再触发任何动作（保留识别，避免握拳被误判成其它手势）
