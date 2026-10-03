@@ -57,7 +57,13 @@ const state = {
   usedCpuDelegate: false,// 是否已使用 CPU 委托（部分机器 GPU 模式检测为空）
   gpuFallbackTimer: null,// GPU 无检测结果时自动切 CPU 的定时器
   errorText: '',
-  videoStatus: { text: '正在检测当前页面…', kind: '' }
+  videoStatus: { text: '正在检测当前页面…', kind: '' },
+  // ---------- 自动恢复相关 ----------
+  lastFrameAt: 0,        // 上一帧处理完成的时间（诊断：判断识别循环是不是停了）
+  lastVideoTime: -1,     // 摄像头画面上一帧的时间戳（判断画面是不是卡住了）
+  videoProgressAt: 0,    // 画面最近一次前进的时间
+  cameraAlive: false,    // 摄像头轨道是否还活着
+  restarting: false      // 是否正在自动重启（防止重复触发）
 };
 
 // 显示防抖：身体晃动造成的“疑似手”会一闪而过。
@@ -114,9 +120,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: true });
       break;
     case 'TARGET_CHANGED':
-      // 控制目标切换到其它 B 站标签页（用户切换标签后自动跟随）
+      // 控制目标切换（用户切标签后自动跟随；tabId 为 null 表示暂时没有目标）
       if (message.tabId) state.targetTabId = message.tabId;
+      else state.targetTabId = null;
       if (typeof message.isBiliHome === 'boolean') state.isBiliHome = message.isBiliHome;
+      sendResponse({ ok: true });
+      break;
+    case 'OFFSCREEN_RESTART':
+      // 后台自检发现识别循环卡死时，可以让引擎自己重启一次
+      // （更彻底的做法是后台直接关掉重建本页面，这条是兜底）
+      restartEngine();
       sendResponse({ ok: true });
       break;
     case 'OFFSCREEN_GET_STATUS':
@@ -129,12 +142,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 chrome.runtime.sendMessage({ type: 'OFFSCREEN_READY' }).catch(() => {});
 
 // ============================================================
-// 启动 / 停止
+// 防冻结 / 防降频：一直持有一把 Web Lock
+//
+// 离屏文档是不可见页面，浏览器对不可见页面的定时器会「节流」，跑一段时间后
+// 甚至可能整页冻结 —— 而本引擎的逐帧识别正是 setTimeout 驱动的，
+// 一旦被降频，表现就是"手势突然不灵了"。
+// 持有 Web Lock 是浏览器官方认可的"我还有活要干"信号，可以让页面免于冻结，
+// 不需要任何权限，也没有界面变化。
+// ============================================================
+function holdKeepAliveLock() {
+  try {
+    if (!navigator.locks || typeof navigator.locks.request !== 'function') return;
+    // 故意不 resolve：这把锁要一直握着
+    navigator.locks.request('gvc-engine-keepalive', () => new Promise(() => {}))
+      .catch(() => { /* 拿不到就算了，还有后台自检兜底 */ });
+  } catch (e) { /* 忽略 */ }
+}
+holdKeepAliveLock();
+
+// ============================================================
+// 启动 / 停止 / 自动恢复
 // ============================================================
 async function startEngine() {
   if (state.running) return;
   state.running = true;
   state.errorText = '';
+  state.lastVideoTime = -1;
+  state.videoProgressAt = Date.now();
   // 每次重新开始都用全新的追踪器，避免拿旧状态判断
   state.tracker = GestureMath.createPoseTracker({ stableFrames: STABLE_FRAMES });
   notify();
@@ -145,12 +179,15 @@ async function startEngine() {
         audio: false
       });
     }
+    watchCameraTracks();
     els.camera.srcObject = state.cameraStream;
     await els.camera.play();
+    state.cameraAlive = true;
     await loadHandsModel();
     await refreshVideoStatus();
   } catch (err) {
     state.running = false;
+    state.cameraAlive = false;
     state.errorText = '摄像头启动失败（错误码：' + (err && err.name || '未知') + '）：' + ((err && err.message) || err);
     notify();
   }
@@ -163,6 +200,7 @@ function stopEngine() {
     state.cameraStream.getTracks().forEach((t) => t.stop());
     state.cameraStream = null;
   }
+  state.cameraAlive = false;
   state.hands = null;
   state.modelReady = false;
   if (state.gpuFallbackTimer) {
@@ -176,6 +214,60 @@ function stopEngine() {
   state.currentGesture = '等待识别…';
   state.errorText = '';
   notify();
+}
+
+// 摄像头轨道被系统/其它程序中断时（拔掉摄像头、被别的软件抢占、
+// 隐私设置变化…）自动重启引擎。旧版没有任何监听：中断之后画面定格，
+// 识别永远停在同一帧，表现就是"手势不响应"。
+function watchCameraTracks() {
+  if (!state.cameraStream || !state.cameraStream.getVideoTracks) return;
+  for (const track of state.cameraStream.getVideoTracks()) {
+    if (track.__gvcWatched) continue;
+    track.__gvcWatched = true;
+    track.addEventListener('ended', () => {
+      state.cameraAlive = false;
+      setGesture('摄像头已断开', '正在自动重新打开摄像头…');
+      notify();
+      scheduleEngineRestart('摄像头被中断');
+    });
+  }
+}
+
+// 画面长时间不前进（currentTime 不动）= 摄像头卡住或播放停了 → 重启
+const CAMERA_STALL_MS = 3000;
+function checkCameraProgress() {
+  if (!state.running) return;
+  const t = els.camera.currentTime;
+  if (t !== state.lastVideoTime) {
+    state.lastVideoTime = t;
+    state.videoProgressAt = Date.now();
+    return;
+  }
+  if (state.videoProgressAt && Date.now() - state.videoProgressAt > CAMERA_STALL_MS) {
+    scheduleEngineRestart('摄像头画面卡住');
+  }
+}
+
+// 自动重启（带防抖：同一时间只允许一次）
+function scheduleEngineRestart(reason) {
+  if (state.restarting) return;
+  state.restarting = true;
+  state.errorText = '识别已中断，正在自动恢复（' + reason + '）…';
+  notify();
+  setTimeout(async () => {
+    try {
+      // 用户可能已经手动关掉了控制，那就不要再把它拉起来
+      if (!state.controlOn) return;
+      stopEngine();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await startEngine();
+    } catch (e) {
+      state.errorText = '自动恢复失败：' + ((e && e.message) || e);
+    } finally {
+      state.restarting = false;
+      notify();
+    }
+  }, 200);
 }
 
 // ============================================================
@@ -238,12 +330,15 @@ async function processFrame() {
     state.frameTimer = null;
     return;
   }
+  // 摄像头看门狗：画面卡住就自动重启（跟模型是否加载好无关）
+  checkCameraProgress();
   if (!state.processing && state.hands && els.camera.readyState >= 2) {
     state.processing = true;
     try {
       // 新版 API：同步检测当前视频帧（时间戳需单调递增）
       const result = state.hands.detectForVideo(els.camera, performance.now());
       state.frames += 1;
+      state.lastFrameAt = Date.now();
       if (state.frameErrors >= 10) {
         state.frameErrors = 0;
         state.errorText = '';
@@ -689,6 +784,8 @@ function buildStatus() {
     frameErrors: state.frameErrors,
     running: state.running,
     modelReady: state.modelReady,
+    cameraAlive: state.cameraAlive,
+    lastFrameAt: state.lastFrameAt,
     errorText: state.errorText,
     videoStatus: state.videoStatus
   };

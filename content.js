@@ -1091,6 +1091,12 @@
           applyPanelStatus(message.payload || {});
           return { status: 'ok' };
         }
+        // 后台自检发现识别中断并自动恢复后，在页面上说一声
+        //（否则用户只会觉得"手势突然不灵了"，不知道它已经自己修好了）
+        case 'SHOW_TOAST': {
+          showToast(message.text || '手势视频控制', message.duration || TOAST_DURATION);
+          return { status: 'ok' };
+        }
         case 'GESTURE_ACTION': {
           const result = await handleGestureAction(message);
           // 页面提示浮层反馈

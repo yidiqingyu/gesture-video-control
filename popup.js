@@ -27,6 +27,7 @@ const els = {
   gestureDetail: document.getElementById('gesture-detail'),
   modelStatus: document.getElementById('model-status'),
   videoStatus: document.getElementById('video-status'),
+  healthStatus: document.getElementById('health-status'),
   toggle: document.getElementById('control-toggle'),
   shortToggle: document.getElementById('short-toggle')
 };
@@ -137,7 +138,11 @@ function init() {
     }
 
     // 6. 周期性同步后台状态（防止漏消息）
-    state.statusTimer = setInterval(refreshFromBackground, 2500);
+    state.statusTimer = setInterval(() => {
+      refreshFromBackground();
+      refreshHealth();
+    }, 2500);
+    refreshHealth();
   })().catch((e) => {
     setModelStatus('❌ 初始化失败：' + ((e && e.message) || e));
   });
@@ -300,10 +305,45 @@ async function ensureContentScript() {
 // ============================================================
 // 后台状态 / 预览帧处理
 // ============================================================
+// ============================================================
+// 自检状态显示
+// 后台 Service Worker 每分钟自检一次（见 background.js / health.js）：
+// 识别断了会自动重建重启，页面脚本失效会提示用户点一下图标。
+// 这里把结果翻译成人话给用户看，避免"它到底有没有在识别"全靠猜。
+// ============================================================
+const HEALTH_TEXT = {
+  ok: '',
+  off: '',
+  suspect: '👀 自检：识别循环疑似停顿，正在观察',
+  recovering: '🔄 自检发现识别中断，已自动恢复（无需操作）',
+  need_click: '⚠️ 页面脚本已失效，点一下扩展图标即可恢复控制',
+  need_popup: 'ℹ️ 浏览器重启后，打开一次本弹窗即可恢复识别',
+  engine_failed: '⚠️ 识别反复启动失败，请检查摄像头（是否被其它程序占用）与权限'
+};
+
+async function refreshHealth() {
+  if (!els.healthStatus) return;
+  try {
+    const h = await chrome.runtime.sendMessage({ type: 'HEALTH_GET' });
+    const text = h ? HEALTH_TEXT[h.health] : '';
+    if (text) {
+      els.healthStatus.textContent = text;
+      els.healthStatus.hidden = false;
+    } else {
+      els.healthStatus.hidden = true;
+    }
+  } catch (e) {
+    // 后台没响应：不打扰用户，下一次刷新再说
+  }
+}
+
 function onRuntimeMessage(message) {
   if (!message || typeof message.type !== 'string') return;
   if (message.type === 'OFFSCREEN_UPDATE') {
     applyBackgroundStatus(message);
+  }
+  if (message.type === 'HEALTH_UPDATE') {
+    refreshHealth();
   }
 }
 

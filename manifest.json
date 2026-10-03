@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "手势视频控制 · Gesture Video Control",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "用摄像头手势控制网页视频播放：OK 播放/暂停，小拇指调音量，食指切视频或滑动刷短视频，手掌张开切换模式，666 手势可锁定，🤟 刷 B 站更顺手。",
   "minimum_chrome_version": "110",
   "permissions": [
@@ -9,7 +9,28 @@
     "scripting",
     "storage",
     "offscreen",
-    "debugger"
+    "debugger",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://bilibili.com/*",
+    "https://*.bilibili.com/*",
+    "https://youtube.com/*",
+    "https://*.youtube.com/*",
+    "https://youtube-nocookie.com/*",
+    "https://*.youtube-nocookie.com/*",
+    "https://douyin.com/*",
+    "https://*.douyin.com/*",
+    "https://v.qq.com/*",
+    "https://*.v.qq.com/*",
+    "https://iqiyi.com/*",
+    "https://*.iqiyi.com/*",
+    "https://youku.com/*",
+    "https://*.youku.com/*",
+    "https://ixigua.com/*",
+    "https://*.ixigua.com/*",
+    "https://mgtv.com/*",
+    "https://*.mgtv.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -17,8 +38,24 @@
   "content_scripts": [
     {
       "matches": [
-        "https://www.bilibili.com/*",
-        "https://*.bilibili.com/*"
+        "https://bilibili.com/*",
+        "https://*.bilibili.com/*",
+        "https://youtube.com/*",
+        "https://*.youtube.com/*",
+        "https://youtube-nocookie.com/*",
+        "https://*.youtube-nocookie.com/*",
+        "https://douyin.com/*",
+        "https://*.douyin.com/*",
+        "https://v.qq.com/*",
+        "https://*.v.qq.com/*",
+        "https://iqiyi.com/*",
+        "https://*.iqiyi.com/*",
+        "https://youku.com/*",
+        "https://*.youku.com/*",
+        "https://ixigua.com/*",
+        "https://*.ixigua.com/*",
+        "https://mgtv.com/*",
+        "https://*.mgtv.com/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle"

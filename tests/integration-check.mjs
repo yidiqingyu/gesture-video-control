@@ -99,10 +99,62 @@ for (const file of ['offscreen.js', 'float.js', 'content.js', 'popup.js']) {
   }
 }
 
-// ---------- 4. gesture.js 自己必须能被独立加载（不依赖 DOM）----------
+// ---------- 3b. 后台用到的 HealthDecide 接口是否都存在 ----------
+const healthSrc = read('health.js');
+const HealthDecide = new Function(healthSrc + '\n;return globalThis.HealthDecide;')();
+const healthExported = Object.keys(HealthDecide);
+{
+  const text = read('background.js');
+  const used = new Set();
+  for (const m of text.matchAll(/HealthDecide\.([A-Za-z_$][\w$]*)/g)) used.add(m[1]);
+  for (const name of used) {
+    record('3b-自检接口', 'background.js 用到的 HealthDecide.' + name,
+      healthExported.indexOf(name) !== -1, { missing: name, healthExported });
+  }
+  record('3b-自检接口', 'background.js 用 importScripts 加载了 health.js',
+    /importScripts\(\s*['"]health\.js['"]\s*\)/.test(text), {});
+}
+
+// ---------- 4. gesture.js / health.js 必须能被独立加载（不依赖 DOM）----------
 record('4-可加载', 'gesture.js 能脱离浏览器加载并给出 classifyPose',
   typeof GestureMath.classifyPose === 'function' && typeof GestureMath.createPoseTracker === 'function',
   { exported });
+record('4-可加载', 'health.js 能脱离浏览器加载并给出 check',
+  typeof HealthDecide.check === 'function' && typeof HealthDecide.isControllableUrl === 'function',
+  { healthExported });
+
+// ---------- 5. 权限与站点清单要对得上 ----------
+if (manifest) {
+  const perms = manifest.permissions || [];
+  record('5-权限', '声明了 alarms 权限（自检闹钟要用）', perms.indexOf('alarms') !== -1, { perms });
+
+  const hosts = (manifest.host_permissions || []).join(' ');
+  const allMatches = (manifest.content_scripts || []).flatMap((cs) => cs.matches || []);
+  const declared = allMatches.concat(manifest.host_permissions || []);
+
+  for (const site of HealthDecide.SITES) {
+    const bare = declared.some((p) => p === 'https://' + site + '/*');
+    const wildcard = declared.some((p) => p === 'https://*.' + site + '/*');
+    record('5-权限', '站点清单与 manifest 一致：' + site, bare && wildcard,
+      { site, bare, wildcard });
+    record('5-权限', 'content_scripts 覆盖：' + site,
+      allMatches.indexOf('https://*.' + site + '/*') !== -1, { site, allMatches });
+  }
+  record('5-权限', '没有申请全站权限 <all_urls>（保持最小权限承诺）',
+    hosts.indexOf('<all_urls>') === -1, { hosts });
+}
+
+// ---------- 6. popup.js 里 getElementById 的 id 必须真的存在 ----------
+for (const [js, html] of [['popup.js', 'popup.html'], ['grant.js', 'grant.html']]) {
+  if (!existsSync(at(js)) || !existsSync(at(html))) continue;
+  const jsText = read(js);
+  const htmlText = read(html);
+  const ids = new Set();
+  for (const m of jsText.matchAll(/getElementById\(\s*['"]([^'"]+)['"]\s*\)/g)) ids.add(m[1]);
+  for (const id of ids) {
+    record('6-DOM id', js + ' → #' + id, htmlText.indexOf('id="' + id + '"') !== -1, { id });
+  }
+}
 
 // ---------- 汇总 ----------
 console.log('\n===== 静态体检 =====');
