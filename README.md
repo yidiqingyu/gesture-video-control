@@ -165,7 +165,7 @@ gesture-video-control/
 
 ### 一、从 GitHub 下载源码
 
-1. 打开本项目的 GitHub 仓库主页；
+1. 打开本项目的 GitHub 仓库主页：<https://github.com/yidiqingyu/gesture-video-control>
 2. 点击页面右侧绿色的 **Code** 按钮，再选择 **Download ZIP**；
 3. 把压缩包解压到任意目录（建议路径为纯英文，例如 `D:\extensions\gesture-video-control`）。
 
@@ -196,7 +196,7 @@ gesture-video-control/
 
 ### 四、通过 Release 安装 .crx（可选，适合小白）
 
-如果维护者在 [Releases](https://github.com/) 页提供了打包好的 `.crx` 文件：
+如果维护者在 [Releases](https://github.com/yidiqingyu/gesture-video-control/releases) 页提供了打包好的 `.crx` 文件：
 
 1. 下载 `.crx` 文件；
 2. 打开 `chrome://extensions` 并开启开发者模式；
@@ -281,16 +281,27 @@ node tests/gesture-inspect.mjs ok four -v   # 只看指定手势，加 -v 附带
 powershell -ExecutionPolicy Bypass -File .\pack-crx.ps1
 ```
 
-脚本会自动寻找本机 Chrome / Edge 并打包，产物输出到项目目录的**上一级**：
+脚本会自动寻找本机 Chrome / Edge 并打包，产物收在项目下的 **`dist\`** 目录里（`.gitignore` 已忽略，不会进仓库）：
 
-- `gesture-video-control.crx` —— 可上传到 GitHub Release 供用户拖拽安装；
-- `gesture-video-control.pem` —— **扩展私钥，请务必保密，不要提交到仓库**（`.gitignore` 已忽略）。
+- `dist\gesture-video-control.crx` —— 可上传到 GitHub Release 供用户拖拽安装；
+- `dist\gesture-video-control.pem` —— **扩展私钥，请务必保密，不要提交到仓库**；也**别弄丢**。
+
+> 📦 脚本**不会直接打包项目目录**：它会先复制出一份「只含运行必需文件」的快照
+> （排除 `.git` 完整提交历史、`tests\`、`memory\` 工作记录、`drafts\`、`trash\`、`.agents\`、
+> 私钥与产物本身），打包完再把快照删掉。这样用户拿到的 `.crx` 里只有插件本身（约 15 MB），
+> 不会把你的提交历史和本机工作记录一起带出去。
 
 以后想保持同一个扩展 ID 更新，保留 `.pem` 并再次打包：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\pack-crx.ps1 -Key .\gesture-video-control.pem
+powershell -ExecutionPolicy Bypass -File .\pack-crx.ps1 -Key .\dist\gesture-video-control.pem
 ```
+
+> ⚠️ **`.pem` 千万别丢**：扩展 ID 由这个密钥决定。丢了它再打包会生成新的扩展 ID，
+> 老用户装上新 `.crx` 会变成“两个扩展”。建议把它备份到只有你能看到的地方（不要放仓库、不要放网盘公开目录）。
+>
+> 💡 打包时如果 Chrome 正在运行，它会把这个命令转交给已有窗口、不执行打包 —— 请先完全退出 Chrome
+> （脚本检测不到产物时也会提示这一点）。
 
 ### 方式二：Chrome 界面打包
 

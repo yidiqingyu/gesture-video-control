@@ -333,6 +333,59 @@ for (const [js, html] of [['popup.js', 'popup.html'], ['grant.js', 'grant.html']
   }
 }
 
+// ---------- 10. 打包排除清单不能把运行需要的文件排掉 ----------
+// pack-crx.ps1 会先复制一份"只含运行必需文件"的快照再打包；如果排除清单写错
+//（比如把 vendor/ 或 icons/ 排掉），打出来的 .crx 就是坏的，而且很难查。
+{
+  const packText = read('pack-crx.ps1');
+  const pick = (name) => {
+    const m = packText.match(new RegExp('\\$' + name + '\\s*=\\s*@\\(([^)]*)\\)'));
+    return m ? Array.from(m[1].matchAll(/'([^']+)'/g)).map((x) => x[1]) : [];
+  };
+  const excludedDirs = pick('excludeDirs');
+  const excludedFiles = pick('excludeFiles');
+
+  record('10-打包清单', '能解析出排除目录（' + excludedDirs.length + ' 个）', excludedDirs.length > 0, { excludedDirs });
+  record('10-打包清单', '排除了 .git（否则用户的 .crx 里会带上完整提交历史）',
+    excludedDirs.indexOf('.git') !== -1, { excludedDirs });
+  record('10-打包清单', '排除了 memory（本机工作记录不该发给用户）',
+    excludedDirs.indexOf('memory') !== -1, { excludedDirs });
+  record('10-打包清单', '排除了 tests（自测不进 .crx）',
+    excludedDirs.indexOf('tests') !== -1, { excludedDirs });
+  record('10-打包清单', '排除了 dist（产物本身不该再进包）',
+    excludedDirs.indexOf('dist') !== -1, { excludedDirs });
+  record('10-打包清单', '没有把 vendor/ 排掉（MediaPipe 运行时与模型都在里面）',
+    excludedDirs.indexOf('vendor') === -1, { excludedDirs });
+  record('10-打包清单', '没有把 icons/ 排掉', excludedDirs.indexOf('icons') === -1, { excludedDirs });
+
+  // 逐个核对"运行时必须的文件"不会被排除规则命中
+  const needed = new Set(['health.js', 'gesture.js', 'action-policy.js', 'gesture-catalog.js']);
+  if (manifest) {
+    if (manifest.background && manifest.background.service_worker) needed.add(manifest.background.service_worker);
+    if (manifest.action && manifest.action.default_popup) needed.add(manifest.action.default_popup);
+    for (const cs of manifest.content_scripts || []) for (const f of cs.js || []) needed.add(f);
+    for (const v of Object.values(manifest.icons || {})) needed.add(v);
+    for (const v of Object.values((manifest.action && manifest.action.default_icon) || {})) needed.add(v);
+  }
+  for (const html of ['offscreen.html', 'popup.html', 'float.html', 'grant.html']) {
+    if (!existsSync(at(html))) continue;
+    for (const m of read(html).matchAll(/(?:src|href)=["']([^"']+)["']/g)) {
+      const ref = m[1];
+      if (/^https?:/i.test(ref)) continue;
+      needed.add(ref.split('?')[0].split('#')[0]);
+    }
+  }
+  needed.add('vendor/mediapipe/hand_landmarker.task');
+  needed.add('vendor/mediapipe/vision_bundle.mjs');
+
+  for (const file of needed) {
+    const top = file.split('/')[0];
+    record('10-打包清单', '运行需要的文件不会被排除：' + file,
+      excludedDirs.indexOf(top) === -1 && excludedFiles.indexOf(file) === -1,
+      { file, top, excludedDirs, excludedFiles });
+  }
+}
+
 // ---------- 汇总 ----------
 console.log('\n===== 静态体检 =====');
 for (const [group, g] of groups) {

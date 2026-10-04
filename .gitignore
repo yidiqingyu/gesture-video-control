@@ -4,6 +4,9 @@
 # 打包产物（.crx 建议通过 GitHub Release 上传，而不是提交到仓库）
 *.crx
 
+# 打包脚本的产物目录（.crx 与扩展私钥 .pem 都在这里，绝不进仓库）
+dist/
+
 # 系统 / 编辑器文件
 Thumbs.db
 .DS_Store
