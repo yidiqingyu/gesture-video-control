@@ -32,7 +32,9 @@ import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const at = (p) => path.join(root, p);
-const read = (p) => readFileSync(at(p), 'utf8');
+// 统一转成 LF 再比对：仓库里存的是 LF，但 git 在 Windows 上检出时可能写成 CRLF
+// （core.autocrlf），那样带 \n 的正则就匹配不上 —— 这类"换台机器就红"的坑在这里堵掉。
+const read = (p) => readFileSync(at(p), 'utf8').replace(/\r\n/g, '\n');
 
 let passed = 0;
 const failures = [];
