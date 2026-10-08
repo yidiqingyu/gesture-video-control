@@ -261,7 +261,8 @@ for (const [js, html] of [['popup.js', 'popup.html'], ['grant.js', 'grant.html']
     'grant.js', 'grant.html', 'README.md', '.gitignore', 'AGENTS.md',
     'tests/run-all.mjs', 'tests/integration-check.mjs', 'tests/gesture-selftest.mjs',
     'tests/engine-sim.mjs', 'tests/health-selftest.mjs', 'tests/policy-selftest.mjs',
-    'tests/hand-model.mjs', 'tests/gesture-inspect.mjs', 'tests/build-ui-preview.mjs'
+    'tests/hand-model.mjs', 'tests/gesture-inspect.mjs', 'tests/build-ui-preview.mjs',
+    'tests/verify-crx.mjs'
   ];
   for (const file of textFiles) {
     if (!existsSync(at(file))) continue;

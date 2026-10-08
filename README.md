@@ -311,6 +311,7 @@ node tests/policy-selftest.mjs    # 动作闸门：哪些手势需要"正在看�
 node tests/gesture-inspect.mjs    # 打印每个手势的中间量（各手指伸展度、捏合比例、方向），调阈值时看这个
 node tests/gesture-inspect.mjs ok four -v   # 只看指定手势，加 -v 附带拇指明细
 node tests/build-ui-preview.mjs   # 生成界面预览页（不是测试，是给人看图用的）
+node tests/verify-crx.mjs         # 打包后核对 .crx：版本号 / 文件清单 / 有没有夹带私钥与测试
 ```
 
 改动 `gesture.js` 的阈值、`health.js` 的自检策略、或 `action-policy.js` 的动作分类后，**自测要全绿**再提交。
@@ -358,6 +359,16 @@ powershell -ExecutionPolicy Bypass -File .\pack-crx.ps1
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\pack-crx.ps1 -Key .\dist\gesture-video-control.pem
 ```
+
+**打包完一定要核对一下**（`.crx` 里的 manifest 是压缩在 ZIP 里的，肉眼看不出是哪一版，
+历史上就出现过"以为打的是新版、其实拿到的是旧包"）：
+
+```bash
+node tests/verify-crx.mjs --expect 1.4.0
+```
+
+它会拆开 `.crx`，报出版本号、文件清单、以及有没有误把私钥 / 测试 / 工作记录打进去，
+顺手还会用 `.pem` 算出扩展 ID —— **ID 变了就说明私钥换了**，老用户装新包会变成两个扩展。
 
 > ⚠️ **`.pem` 千万别丢**：扩展 ID 由这个密钥决定。丢了它再打包会生成新的扩展 ID，
 > 老用户装上新 `.crx` 会变成“两个扩展”。建议把它备份到只有你能看到的地方（不要放仓库、不要放网盘公开目录）。
