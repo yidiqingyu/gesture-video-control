@@ -1,0 +1,178 @@
+/* ============================================================
+   theme.css —— 设计令牌（全项目唯一的色值 / 圆角 / 阴影 / 动效来源）
+   ------------------------------------------------------------
+   为什么单独一个文件：
+   弹窗（popup.html）、悬浮窗（float.html）、页面内悬浮面板（content.js 的
+   Shadow DOM）三处界面以前各写各的色值，改一个颜色要改三个地方，还容易改歪。
+   现在三处都只写 var(--gvc-xxx)，色值全在这一个文件里。
+
+   三处是怎么拿到这份令牌的：
+     弹窗 / 悬浮窗 / 授权页 → <link rel="stylesheet" href="theme.css">
+     页面内面板 / 提示浮层  → manifest 的 content_scripts.css 注入到页面 :root
+                              （Shadow DOM 会从宿主元素继承自定义属性，所以面板里
+                                的 var(--gvc-xxx) 一样能用；而且这份文件只定义
+                                自定义属性、不写元素选择器，注入页面不会污染网站样式）
+
+   主题怎么决定（两层，后者盖前者）：
+     1. 默认跟随系统 —— 系统是浅色就用浅色（@media prefers-color-scheme）；
+        纯 CSS 就够，JS 还没跑起来的那一瞬间也不会闪错颜色。
+     2. 用户手动指定 —— 按钮（主题切换）把 data-gvc-theme="dark|light" 写在元素上，
+        属性选择器直接盖掉系统偏好。写在 Shadow DOM 的宿主元素上也能生效，
+        所以页面内面板 / 提示浮层都能单独跟着走。
+
+   ⚠️ 浅色的值在这个文件里出现了两遍：一遍给"跟随系统"（媒体查询），一遍给
+      "手动指定"（属性选择器）。两处必须逐字一致 —— tests/integration-check.mjs
+      里的「主题令牌」会逐条比对，改一边忘一边会直接报红。
+
+   另外：关闭动画偏好（prefers-reduced-motion）也在这里统一降级 —— 只要用
+   var(--gvc-fast/base/pulse-anim/scan-anim)，三处界面都自动跟着走。
+   ============================================================ */
+
+/* ============ 与主题无关的令牌 ============ */
+:root {
+  /* ---------- 形状 ---------- */
+  --gvc-radius-lg: 16px;
+  --gvc-radius: 12px;
+  --gvc-radius-sm: 9px;
+  --gvc-radius-xs: 6px;
+
+  /* ---------- 字体 ---------- */
+  --gvc-font: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --gvc-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* ---------- 动效 ---------- */
+  --gvc-ease: cubic-bezier(.4, 0, .2, 1);
+  --gvc-fast: 120ms;
+  --gvc-base: 180ms;
+  /* 动画整体写成令牌，关闭动画时只要把它设成 none */
+  --gvc-pulse-anim: gvc-pulse 2.4s var(--gvc-ease) infinite;
+  --gvc-scan-anim: gvc-scan 7s linear infinite;
+}
+
+/* ============ 深色：默认值，也是用户手动选「深色」时的那套 ============ */
+:root,
+[data-gvc-theme="dark"] {
+  color-scheme: dark;
+
+  /* ---------- 摄像头画面（两种主题下都保持深色：视频本身发光，浅底反而刺眼）---------- */
+  --gvc-stage: #07090D;
+  --gvc-stage-text: #7C8AA0;
+  --gvc-stage-mark: rgba(255, 255, 255, .32);
+
+  --gvc-bg: #0A0D12;
+  --gvc-bg-soft: #0E1218;
+  --gvc-surface: #141A22;
+  --gvc-surface-hi: #1B232E;
+  --gvc-line: rgba(255, 255, 255, .07);
+  --gvc-line-strong: rgba(255, 255, 255, .14);
+  --gvc-text: #E6EDF6;
+  --gvc-text-dim: #8E9CB0;
+  --gvc-text-mute: #66738A;
+  --gvc-accent: #4F8BFF;
+  --gvc-accent-hi: #78A6FF;
+  --gvc-accent-soft: rgba(79, 139, 255, .15);
+  --gvc-accent-glow: rgba(79, 139, 255, .40);
+  --gvc-on-accent: #FFFFFF;
+  --gvc-ok: #34D399;
+  --gvc-ok-soft: rgba(52, 211, 153, .13);
+  --gvc-ok-text: #6EE7B7;
+  --gvc-warn: #FBBF24;
+  --gvc-warn-soft: rgba(251, 191, 36, .13);
+  --gvc-warn-text: #FCD34D;
+  --gvc-err: #F87171;
+  --gvc-err-soft: rgba(248, 113, 113, .13);
+  --gvc-err-text: #FCA5A5;
+  --gvc-hairline: inset 0 1px 0 rgba(255, 255, 255, .06);
+  --gvc-shadow-sm: 0 1px 2px rgba(0, 0, 0, .5);
+  --gvc-shadow-lg: 0 26px 60px -22px rgba(0, 0, 0, .92);
+}
+
+/* ============ 浅色（一）：跟随系统 ============
+   层次和深色是一套逻辑：越往上越"亮/越靠前"
+   bg 页面底（淡灰）→ bg-soft 标题栏 → surface 卡片（白）→ surface-hi 卡片内的行 / hover */
+@media (prefers-color-scheme: light) {
+  :root:not([data-gvc-theme="dark"]) {
+    color-scheme: light;
+
+    /* 浅色下摄像头画面依然是深色舞台 */
+    --gvc-stage: #0B0F14;
+    --gvc-stage-text: #8A98AC;
+    --gvc-stage-mark: rgba(255, 255, 255, .38);
+
+    --gvc-bg: #F1F4F9;
+    --gvc-bg-soft: #F7F9FC;
+    --gvc-surface: #FFFFFF;
+    --gvc-surface-hi: #EEF2F8;
+    --gvc-line: rgba(15, 23, 42, .10);
+    --gvc-line-strong: rgba(15, 23, 42, .20);
+    --gvc-text: #0F172A;
+    --gvc-text-dim: #586A85;
+    --gvc-text-mute: #8394A8;
+    --gvc-accent: #2F6BFF;
+    --gvc-accent-hi: #4F8BFF;
+    --gvc-accent-soft: rgba(47, 107, 255, .10);
+    --gvc-accent-glow: rgba(47, 107, 255, .30);
+    --gvc-on-accent: #FFFFFF;
+    --gvc-ok: #0E9F6E;
+    --gvc-ok-soft: rgba(14, 159, 110, .10);
+    --gvc-ok-text: #0A7A55;
+    --gvc-warn: #D97706;
+    --gvc-warn-soft: rgba(217, 119, 6, .10);
+    --gvc-warn-text: #92400E;
+    --gvc-err: #DC2626;
+    --gvc-err-soft: rgba(220, 38, 38, .09);
+    --gvc-err-text: #B91C1C;
+    --gvc-hairline: inset 0 1px 0 rgba(255, 255, 255, .90);
+    --gvc-shadow-sm: 0 1px 2px rgba(15, 23, 42, .08);
+    --gvc-shadow-lg: 0 26px 60px -24px rgba(15, 23, 42, .34);
+  }
+}
+
+/* ============ 浅色（二）：用户手动指定 ============
+   ⚠️ 值必须和上面那块完全一致（有自测逐条比对）。
+   写成不带 :root 的普通属性选择器，是为了让 Shadow DOM 的宿主元素也能用：
+   宿主上写了 data-gvc-theme="light"，它自己的声明会盖过从页面继承来的令牌。 */
+[data-gvc-theme="light"] {
+  color-scheme: light;
+
+  --gvc-stage: #0B0F14;
+  --gvc-stage-text: #8A98AC;
+  --gvc-stage-mark: rgba(255, 255, 255, .38);
+
+  --gvc-bg: #F1F4F9;
+  --gvc-bg-soft: #F7F9FC;
+  --gvc-surface: #FFFFFF;
+  --gvc-surface-hi: #EEF2F8;
+  --gvc-line: rgba(15, 23, 42, .10);
+  --gvc-line-strong: rgba(15, 23, 42, .20);
+  --gvc-text: #0F172A;
+  --gvc-text-dim: #586A85;
+  --gvc-text-mute: #8394A8;
+  --gvc-accent: #2F6BFF;
+  --gvc-accent-hi: #4F8BFF;
+  --gvc-accent-soft: rgba(47, 107, 255, .10);
+  --gvc-accent-glow: rgba(47, 107, 255, .30);
+  --gvc-on-accent: #FFFFFF;
+  --gvc-ok: #0E9F6E;
+  --gvc-ok-soft: rgba(14, 159, 110, .10);
+  --gvc-ok-text: #0A7A55;
+  --gvc-warn: #D97706;
+  --gvc-warn-soft: rgba(217, 119, 6, .10);
+  --gvc-warn-text: #92400E;
+  --gvc-err: #DC2626;
+  --gvc-err-soft: rgba(220, 38, 38, .09);
+  --gvc-err-text: #B91C1C;
+  --gvc-hairline: inset 0 1px 0 rgba(255, 255, 255, .90);
+  --gvc-shadow-sm: 0 1px 2px rgba(15, 23, 42, .08);
+  --gvc-shadow-lg: 0 26px 60px -24px rgba(15, 23, 42, .34);
+}
+
+/* ---------- 关闭动画偏好：动效时长归零、循环动画直接停 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --gvc-fast: 1ms;
+    --gvc-base: 1ms;
+    --gvc-pulse-anim: none;
+    --gvc-scan-anim: none;
+  }
+}

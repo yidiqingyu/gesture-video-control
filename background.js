@@ -166,13 +166,28 @@ async function pingTab(tabId) {
   return !!(resp && resp.type === 'PONG');
 }
 
+// 内容脚本需要的一整套资源。
+// 顺序不能乱：ui-icons.js（图标）、theme-mode.js（主题）、gesture-catalog.js（手势表数据）
+// 都要排在 content.js 前面。
+const CONTENT_FILES = ['gesture-catalog.js', 'ui-icons.js', 'theme-mode.js', 'content.js'];
+
+// 补注入内容脚本时，连设计令牌 theme.css 一起插进去。
+// 只走 executeScript 的话，页面里就没有 --gvc-* 令牌，页面内悬浮面板会退化成
+// 没有样式的透明框（用 insertCSS 而不是往页面塞 <link>，不受网站 CSP 限制）。
+async function injectContentAssets(tabId) {
+  if (!tabId) return false;
+  await chrome.scripting.insertCSS({ target: { tabId }, files: ['theme.css'] }).catch(() => {});
+  await chrome.scripting.executeScript({ target: { tabId }, files: CONTENT_FILES });
+  return true;
+}
+
 // 给标签页补注入内容脚本，并确认它真的活了
 // （固定站点权限的网站一定能注入；任意网站要看 activeTab 还有没有效）
 async function ensureScriptIn(tabId) {
   if (!tabId) return false;
   if (await pingTab(tabId)) return true;
   try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['gesture-catalog.js', 'content.js'] });
+    await injectContentAssets(tabId);
   } catch (e) {
     return false;
   }
@@ -616,10 +631,7 @@ chrome.windows.onRemoved.addListener((windowId) => {
 function switchControlTab(tabId) {
   saveControlTab(tabId);
   currentIsBiliHome = false;
-  chrome.scripting.executeScript({
-    target: { tabId },
-    files: ['gesture-catalog.js', 'content.js']
-  }).catch(() => {});
+  injectContentAssets(tabId).catch(() => {});
   chrome.runtime.sendMessage({
     type: 'TARGET_CHANGED',
     tabId,
@@ -637,10 +649,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   await loadControlTab();
   if (!tab || !tab.url) return;
   if (tabId === controlTabId) {
-    chrome.scripting.executeScript({
-      target: { tabId },
-      files: ['gesture-catalog.js', 'content.js']
-    }).catch(() => {});
+    injectContentAssets(tabId).catch(() => {});
     currentIsBiliHome = false;
     chrome.runtime.sendMessage({ type: 'TARGET_CHANGED', tabId, isBiliHome: false }).catch(() => {});
     return;

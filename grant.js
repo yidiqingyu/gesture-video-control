@@ -9,6 +9,11 @@
 
 'use strict';
 
+// 把 HTML 里的 <span data-icon="..."> 占位换成内联 SVG（ui-icons.js）
+if (globalThis.UIIcons) UIIcons.mount(document);
+// 主题跟着用户在插件里选的那套（跟随系统 / 深色 / 浅色）
+if (globalThis.ThemeMode) ThemeMode.init();
+
 const params = new URLSearchParams(location.search);
 const tabId = parseInt(params.get('tab') || '', 10);
 const msgEl = document.getElementById('msg');
@@ -20,7 +25,9 @@ const doneBtn = document.getElementById('done');
     const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     stream.getTracks().forEach((track) => track.stop());
 
-    msgEl.textContent = '✅ 摄像头授权成功！后台手势识别已准备启动，可以关闭本页面。';
+    // 这里只用文字颜色表达结果，不再往文案里塞 ✅ / ❌
+    msgEl.className = 'ok';
+    msgEl.textContent = '摄像头授权成功！后台手势识别已准备启动，可以关闭本页面。';
 
     // 通知后台识别引擎启动（目标标签页由弹窗传入）
     if (Number.isInteger(tabId) && tabId > 0) {
@@ -35,8 +42,9 @@ const doneBtn = document.getElementById('done');
     }
     doneBtn.hidden = false;
   } catch (err) {
+    msgEl.className = 'err';
     msgEl.textContent =
-      '❌ 摄像头授权失败（错误码：' + (err && err.name || '未知') + '）。' +
+      '摄像头授权失败（错误码：' + (err && err.name || '未知') + '）。' +
       '请检查 Windows「设置 → 隐私和安全性 → 相机」是否允许桌面应用访问相机，然后关闭本页重试。';
   }
 })();

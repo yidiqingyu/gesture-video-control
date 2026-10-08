@@ -31,7 +31,8 @@ const els = {
   toggle: document.getElementById('control-toggle'),
   shortToggle: document.getElementById('short-toggle'),
   gestureHelp: document.getElementById('gesture-help'),
-  gestureHelpBody: document.getElementById('gesture-help-body')
+  gestureHelpBody: document.getElementById('gesture-help-body'),
+  themeToggle: document.getElementById('theme-toggle')
 };
 
 // ---------- 状态 ----------
@@ -73,6 +74,10 @@ const GESTURE_EMOJI = {
 // 初始化（先同步绑定按钮，确保任何异常都不会导致按钮失效）
 // ============================================================
 function init() {
+  // 把 HTML 里的 <span data-icon="..."> 占位换成内联 SVG（ui-icons.js）
+  if (globalThis.UIIcons) UIIcons.mount(document);
+  // 主题：跟随系统 / 深色 / 浅色（按钮 + 记忆，和其它界面同步）
+  if (globalThis.ThemeMode) ThemeMode.init({ button: els.themeToggle });
   els.toggle.addEventListener('change', onToggleChange);
   if (els.shortToggle) {
     els.shortToggle.addEventListener('change', onShortToggleChange);
@@ -293,9 +298,14 @@ async function ensureContentScript() {
     return true;
   } catch (e) {
     try {
+      // 设计令牌（theme.css）也要一起插进去，否则页面内面板没有样式
+      await chrome.scripting.insertCSS({
+        target: { tabId: state.activeTabId },
+        files: ['theme.css']
+      }).catch(() => {});
       await chrome.scripting.executeScript({
         target: { tabId: state.activeTabId },
-        files: ['gesture-catalog.js', 'content.js']
+        files: ['gesture-catalog.js', 'ui-icons.js', 'theme-mode.js', 'content.js']
       });
       return true;
     } catch (err) {
@@ -476,7 +486,9 @@ function initGestureHelp() {
 function setGestureHelpOpen(open) {
   if (!els.gestureHelp || !els.gestureHelpBody) return;
   els.gestureHelpBody.hidden = !open;
-  els.gestureHelp.textContent = open ? '📖 收起手势对照表' : '📖 手势对照表';
+  // 图标是 SVG，只换文字标签（不要再动 textContent，否则会把图标也擦掉）
+  const label = document.getElementById('gesture-help-label');
+  if (label) label.textContent = open ? '收起手势对照表' : '手势对照表';
   els.gestureHelp.setAttribute('aria-expanded', open ? 'true' : 'false');
   chrome.storage.local.set({ gestureHelpOpen: !!open }).catch(() => {});
 }

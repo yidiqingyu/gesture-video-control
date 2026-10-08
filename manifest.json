@@ -57,7 +57,8 @@
         "https://mgtv.com/*",
         "https://*.mgtv.com/*"
       ],
-      "js": ["gesture-catalog.js", "content.js"],
+      "js": ["gesture-catalog.js", "ui-icons.js", "theme-mode.js", "content.js"],
+      "css": ["theme.css"],
       "run_at": "document_idle"
     }
   ],

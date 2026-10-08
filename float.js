@@ -24,6 +24,7 @@ const els = {
   btnPreview: document.getElementById('btn-preview'),
   btnMin: document.getElementById('btn-min'),
   btnClose: document.getElementById('btn-close'),
+  btnTheme: document.getElementById('btn-theme'),
   preview: document.getElementById('preview'),
   previewPlaceholder: document.getElementById('preview-placeholder'),
   overlay: document.getElementById('overlay'),
@@ -116,6 +117,10 @@ const GESTURE_EMOJI = {
 // 初始化（先同步绑定按钮，确保任何异常都不会导致按钮失效）
 // ============================================================
 function init() {
+  // 把 HTML 里的 <span/button data-icon="..."> 占位换成内联 SVG（ui-icons.js）
+  if (globalThis.UIIcons) UIIcons.mount(document);
+  // 主题：跟随系统 / 深色 / 浅色（按钮 + 记忆，和其它界面同步）
+  if (globalThis.ThemeMode) ThemeMode.init({ button: els.btnTheme });
   els.titlebar.addEventListener('mousedown', onTitlebarMouseDown);
   window.addEventListener('mousemove', onTitlebarMouseMove);
   window.addEventListener('mouseup', onTitlebarMouseUp);
@@ -403,9 +408,14 @@ async function ensureContentScript() {
     return true;
   } catch (e) {
     try {
+      // 设计令牌（theme.css）也要一起插进去，否则页面内面板没有样式
+      await chrome.scripting.insertCSS({
+        target: { tabId: state.tabId },
+        files: ['theme.css']
+      }).catch(() => {});
       await chrome.scripting.executeScript({
         target: { tabId: state.tabId },
-        files: ['gesture-catalog.js', 'content.js']
+        files: ['gesture-catalog.js', 'ui-icons.js', 'theme-mode.js', 'content.js']
       });
       return true;
     } catch (err) {
@@ -959,7 +969,25 @@ async function toggleShortVideoMode() {
   setGestureLocal('手掌张开', next ? '已切换到短视频模式（食指上=↑，食指下=↓）' : '已切回长视频模式');
 }
 
-// 在预览画面上叠加显示手部 21 个关键点（绿色骨架），用于直观确认检测效果
+// 关键点骨架的颜色跟着 theme.css 的设计令牌走（深浅主题都协调），
+// 取不到令牌时用兜底色。只读一次并缓存，避免每帧都查 computedStyle。
+let overlayPalette = null;
+
+function overlayColors() {
+  if (overlayPalette) return overlayPalette;
+  const cs = getComputedStyle(document.documentElement);
+  const pick = (name, fallback) => {
+    const v = cs.getPropertyValue(name);
+    return (v && v.trim()) || fallback;
+  };
+  overlayPalette = {
+    bone: pick('--gvc-accent-hi', '#78A6FF'),
+    glow: pick('--gvc-accent', '#4F8BFF')
+  };
+  return overlayPalette;
+}
+
+// 在预览画面上叠加显示手部 21 个关键点（骨架），用于直观确认检测效果
 function drawLandmarks(lm) {
   const canvas = els.overlay;
   if (!canvas) return;
@@ -977,9 +1005,13 @@ function drawLandmarks(lm) {
     [0, 13, 14, 15, 16],
     [0, 17, 18, 19, 20]
   ];
-  ctx.strokeStyle = '#00ff88';
+  const palette = overlayColors();
+  ctx.strokeStyle = palette.bone;
   ctx.lineWidth = 2;
   ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.shadowColor = palette.glow;
+  ctx.shadowBlur = 5;
   for (const chain of chains) {
     ctx.beginPath();
     for (let i = 0; i < chain.length; i++) {
@@ -991,10 +1023,12 @@ function drawLandmarks(lm) {
     }
     ctx.stroke();
   }
-  ctx.fillStyle = '#00ff88';
+  // 关节点：白色小点压在蓝线上，对比更清楚
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#FFFFFF';
   for (const p of lm) {
     ctx.beginPath();
-    ctx.arc(px(p.x), py(p.y), 3, 0, Math.PI * 2);
+    ctx.arc(px(p.x), py(p.y), 2.6, 0, Math.PI * 2);
     ctx.fill();
   }
 }

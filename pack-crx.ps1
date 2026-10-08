@@ -58,8 +58,9 @@ New-Item -ItemType Directory -Force -Path $stageExt | Out-Null
 
 # 这些目录/文件不进 .crx：
 #   .git 完整提交历史 · .agents 本机工具目录 · tests 自测 · memory 本机工作记录
-#   drafts/trash 草稿与暂存 · dist 产物本身 · node_modules · 打包脚本自己 · 私钥/产物/日志
-$excludeDirs = @('.git', '.agents', 'tests', 'memory', 'drafts', 'trash', 'dist', 'node_modules')
+#   drafts/trash 草稿与暂存 · dist 产物本身 · assets 设计素材与预览页 · node_modules
+#   · 打包脚本自己 · 私钥/产物/日志
+$excludeDirs = @('.git', '.agents', 'tests', 'memory', 'drafts', 'trash', 'dist', 'assets', 'node_modules')
 $excludeFiles = @('.gitignore', 'AGENTS.md', 'pack-crx.ps1', 'pack-crx.bat', '*.pem', '*.crx', '*.log')
 
 Write-Host "使用浏览器: $browser"

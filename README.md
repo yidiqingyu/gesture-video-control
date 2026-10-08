@@ -142,6 +142,9 @@ gesture-video-control/
 ├── gesture.js           # 手势判定核心（关键点 → 手势名称 / 主手选择 / 姿态平滑）
 ├── gesture-catalog.js   # 手势对照表（数据 + 渲染 + 样式，弹窗与悬浮面板共用）
 ├── action-policy.js     # 动作闸门：「这个手势现在该不该执行」（没在看视频就拦掉观看类手势）
+├── theme.css            # 设计令牌：颜色 / 圆角 / 阴影 / 动效（深浅双主题 + 手动覆盖）
+├── theme-mode.js        # 主题模式：跟随系统 / 深色 / 浅色（按钮 + 记忆 + 三处同步）
+├── ui-icons.js          # 内联 SVG 图标集（弹窗 / 悬浮窗 / 面板共用，替代 emoji 图标）
 ├── offscreen.html       # 离屏文档：后台运行摄像头 + 手势识别（不可见）
 ├── offscreen.js         # 后台识别引擎：摄像头、模型、识别循环、指令发送
 ├── grant.html / grant.js# 一次性“摄像头授权页”（弹窗权限提示失效时的兜底）
@@ -151,10 +154,11 @@ gesture-video-control/
 ├── popup.html           # 弹窗：遥控器（预览、手势、状态、开关）
 ├── popup.css            # 弹窗样式
 ├── popup.js             # 弹窗控制器：启停后台识别、状态显示、预览
-├── tests/               # 离线自测（合成手模型 / 判定 / 时序 / 自检决策 / 静态体检）
+├── tests/               # 离线自测（合成手模型 / 判定 / 时序 / 自检决策 / 静态体检 / 界面预览生成器）
 ├── vendor/mediapipe/    # MediaPipe Tasks Vision 本地化资源（vision_bundle.mjs / wasm / hand_landmarker.task）
 ├── icons/               # 扩展图标（16/32/48/128）
 ├── docs/                # README 配图
+├── assets/              # 设计素材 / 界面预览页（不打进 .crx）
 ├── pack-crx.ps1         # 一键打包 .crx（Windows）
 ├── pack-crx.bat         # 打包脚本的批处理入口
 ├── LICENSE              # MIT 协议
@@ -244,21 +248,69 @@ gesture-video-control/
 - 音量 = 小拇指单独伸直指向上/下，保持姿势可连续调节；
 - 切集 = 单个食指伸直朝上/朝下一次；短视频模式下食指直接触发键盘 ↑/↓ 切视频。
 
+## 界面与主题（改样式前先看这里）
+
+四处界面（弹窗 / 悬浮窗 / 页面内悬浮面板 / 摄像头授权页）**共用一套设计令牌**：
+色值只写在 `theme.css` 里，别的地方一律写 `var(--gvc-xxx)`，不再各写各的。
+
+| 界面 | 怎么拿到令牌 |
+| --- | --- |
+| 弹窗 `popup.css` / 悬浮窗 `float.css` / 授权页 `grant.html` | `<link rel="stylesheet" href="theme.css">` |
+| 页面内悬浮面板（Shadow DOM） | manifest 的 `content_scripts.css` 注入到页面 `:root`，自定义属性会继承进 Shadow DOM |
+
+几条硬规矩：
+
+- **`theme.css` 里只允许有 `:root { --gvc-* }` 和 `[data-gvc-theme]` 这类属性选择器，不许写
+  元素/类选择器。** 这份文件会被注入到 B 站 / YouTube 等页面上，一旦写了 `.something { … }`
+  就会污染别人的样式。
+- **深浅双主题，两层决定**：默认跟随系统（`prefers-color-scheme`，纯 CSS，JS 没跑起来也不闪），
+  用户点主题按钮可以强制深色 / 浅色，选择记在 `chrome.storage.local.themeMode`，
+  落地的形式就是在元素上写 `data-gvc-theme="dark|light"`（`theme-mode.js` 负责）。
+  按钮是**三态循环**：跟随系统 → 与系统相反 → 与系统相同 → 回到跟随系统；
+  从默认状态点第一下外观一定会变，连点三下必定转回「跟随系统」。
+- **页面内面板不碰网站的 `<html>`**：`data-gvc-theme` 写在**面板/浮层自己的宿主元素**上，
+  它自己的声明会盖过从页面继承来的令牌，所以面板能单独跟着用户的选择走。
+- **摄像头画面**（`--gvc-stage`）两种主题下都保持深色 —— 视频本身发光，浅底反而刺眼。
+- **关闭动画偏好**（`prefers-reduced-motion`）的降级也只在 `theme.css` 一处：动效时长归零、
+  循环动画令牌设成 `none`，用它的地方自动跟着关。
+- **浅色的值在 `theme.css` 里写了两遍**（媒体查询一份、属性选择器一份）。两处必须逐字一致 ——
+  静态体检第 11 组会逐条比对，改一边忘一边直接报红。
+- **图标是内联 SVG**（`ui-icons.js`），不再用 emoji 当图标：HTML 里写
+  `<span data-icon="camera" data-size="15"></span>`，脚本里调一次 `UIIcons.mount(root)` 替换掉。
+  这样各系统粗细一致，颜色也能跟着 `currentColor` 自动适配主题。
+  主题按钮统一挂 `data-theme-toggle`（预览页和自测靠它找按钮，图标由 `theme-mode.js` 渲染）。
+- **注入顺序不能乱**：`gesture-catalog.js` → `ui-icons.js` → `theme-mode.js` → `content.js`。
+  补注入（`chrome.scripting.executeScript`）时还要一并 `insertCSS('theme.css')`，
+  否则那个标签页里没有令牌，悬浮面板会变成没有样式的透明框。这些都有自测盯着（静态体检 5b 组）。
+
+**想先看效果再装扩展**：跑
+
+```bash
+node tests/build-ui-preview.mjs
+```
+
+生成 `assets/20261004_界面改版预览_v1.html`，**双击这一个文件**就能看到全部界面。
+样式和结构都是从真实文件里抠出来内联的（每个界面各自待在 Shadow DOM 里，避免 `popup.css`
+和 `float.css` 的同名类互相打架），所以**改了样式重新跑一次就同步，不会出现"预览跟实际不一样"**。
+
 ## 开发：改阈值前先跑自测
 
 手势判定全是阈值逻辑，凭感觉调参必然「按下葫芦浮起瓢」（本项目历史上那一串 `fix: 放宽/收紧 XX 判定` 就是这么来的）。
 `tests/` 里有一套离线自测，用**正运动学合成一只手**，没有摄像头也能验证判定：
 
 ```bash
-node tests/run-all.mjs            # 一条命令跑完下面全部自测（推荐，共 556 项）
+node tests/run-all.mjs            # 一条命令跑完下面全部自测（推荐，共 669 项）
 node tests/integration-check.mjs  # 静态体检：manifest / HTML 引用 / 接口一致性 / 权限与站点清单 /
-                                  #   DOM id / 编码 / 手势表数据 / 动作闸门分类，共 180 项
+                                  #   DOM id / 编码 / 手势表数据 / 动作闸门分类 / 打包清单 /
+                                  #   主题令牌（用到的变量都有定义、浅色两处一致、没有死令牌）/
+                                  #   主题模式（点一下外观一定变、三步内回到跟随系统），共 293 项
 node tests/gesture-selftest.mjs   # 判定正确性：姿势 / 手歪手转 / 宽高比 / 左右手 / 抖动，共 229 项
 node tests/engine-sim.mjs         # 时序：抗抖动 / 跟手速度 / 稳定速度 / 主手不跳 / 漏检容错，共 13 项
 node tests/health-selftest.mjs    # 自检决策：识别页没了 / 卡死 / 目标页被关 / 脚本失效，共 44 项
 node tests/policy-selftest.mjs    # 动作闸门：哪些手势需要"正在看视频"，共 90 项
 node tests/gesture-inspect.mjs    # 打印每个手势的中间量（各手指伸展度、捏合比例、方向），调阈值时看这个
 node tests/gesture-inspect.mjs ok four -v   # 只看指定手势，加 -v 附带拇指明细
+node tests/build-ui-preview.mjs   # 生成界面预览页（不是测试，是给人看图用的）
 ```
 
 改动 `gesture.js` 的阈值、`health.js` 的自检策略、或 `action-policy.js` 的动作分类后，**自测要全绿**再提交。
@@ -271,6 +323,16 @@ node tests/gesture-inspect.mjs ok four -v   # 只看指定手势，加 -v 附带
 > 会按系统代码页（GBK）解码再按 UTF-8 写回，**整个文件的中文会变成乱码**，
 > 而且语法检查照样通过（乱码也是合法字符串）。`tests/integration-check.mjs` 里的
 > 「编码体检」会拦住这种事故。
+>
+> **改完 `pack-crx.ps1` 要确认 BOM 还在**：这个脚本里有中文，必须是「UTF-8 带 BOM」，
+> 否则 Windows PowerShell 5.1 会按 GBK 读它，打包直接报语法错误。编辑器保存时容易
+> 悄悄把 BOM 吃掉，所以静态体检第 10 组专门盯着这件事（少一个字节就报红）。
+> 补回来的办法（只加字节、不转码）：
+>
+> ```powershell
+> $p = 'pack-crx.ps1'
+> [System.IO.File]::WriteAllBytes($p, [byte[]](0xEF,0xBB,0xBF) + [System.IO.File]::ReadAllBytes($p))
+> ```
 
 ## 如何打包 .crx（发布者用）
 ### 方式一：一键脚本（Windows）

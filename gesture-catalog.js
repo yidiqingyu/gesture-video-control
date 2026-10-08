@@ -165,24 +165,46 @@ const GestureCatalog = (() => {
 
   function css() {
     return `
-      .gh-group { margin-bottom: 10px; }
+      .gh-group { margin-bottom: 12px; }
       .gh-group-title {
-        font-size: 11px; font-weight: 700; letter-spacing: .5px;
-        opacity: .62; margin: 8px 0 6px;
+        display: flex; align-items: center; gap: 8px;
+        margin: 10px 0 7px;
+        font-size: 10.5px; font-weight: 700; letter-spacing: .16em;
+        color: var(--gvc-text-mute, #66738A);
+      }
+      /* 标题右侧一条渐隐细线，分组看得更清楚 */
+      .gh-group-title::after {
+        content: ''; flex: 1; height: 1px;
+        background-image: linear-gradient(90deg, var(--gvc-line-strong, rgba(255, 255, 255, .14)), transparent);
       }
       .gh-item {
-        display: flex; align-items: flex-start; gap: 8px;
-        padding: 6px 8px; border-radius: 8px;
-        background: rgba(127, 127, 127, .10);
-        margin-bottom: 5px;
+        display: flex; align-items: flex-start; gap: 9px;
+        padding: 7px 9px; margin-bottom: 5px;
+        background: var(--gvc-surface-hi, #1B232E);
+        border: 1px solid var(--gvc-line, rgba(255, 255, 255, .07));
+        border-radius: var(--gvc-radius-sm, 9px);
       }
-      .gh-emoji { font-size: 18px; line-height: 1.3; flex: none; min-width: 26px; text-align: center; }
+      /* 手势图标坐在一个圆角小方块里，比裸 emoji 整齐。
+         底色用 surface：深色下比行底色更深、浅色下更亮，两种主题都能看出"一块芯片" */
+      .gh-emoji {
+        flex: none; display: grid; place-items: center;
+        width: 26px; height: 26px;
+        font-size: 15px; line-height: 1;
+        background: var(--gvc-surface, #141A22);
+        border: 1px solid var(--gvc-line, rgba(255, 255, 255, .07));
+        border-radius: var(--gvc-radius-xs, 6px);
+      }
       .gh-info { flex: 1; min-width: 0; }
-      .gh-name { font-size: 12px; font-weight: 700; line-height: 1.35; }
-      .gh-act { font-size: 12px; color: #7aa2ff; line-height: 1.35; }
-      .gh-note { font-size: 11px; opacity: .62; line-height: 1.45; margin-top: 1px; }
+      .gh-name { font-size: 12px; font-weight: 600; line-height: 1.4; }
+      .gh-act { font-size: 12px; line-height: 1.4; color: var(--gvc-accent, #4F8BFF); }
+      .gh-note { margin-top: 2px; font-size: 11px; line-height: 1.5; color: var(--gvc-text-mute, #66738A); }
+      .gh-tips {
+        margin-top: 12px; padding-top: 10px;
+        border-top: 1px solid var(--gvc-line, rgba(255, 255, 255, .07));
+      }
       .gh-tips ul { margin: 0; padding-left: 16px; }
-      .gh-tips li { font-size: 11px; opacity: .74; line-height: 1.6; margin-bottom: 4px; }
+      .gh-tips li { margin-bottom: 4px; font-size: 11px; line-height: 1.65; color: var(--gvc-text-dim, #8E9CB0); }
+      .gh-tips li::marker { color: var(--gvc-accent, #4F8BFF); }
     `;
   }
 

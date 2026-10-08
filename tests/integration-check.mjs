@@ -10,10 +10,14 @@
 //   3b. background.js 用到的 HealthDecide.xxx 是否真的被导出
 //   4. gesture.js / health.js 能否脱离浏览器加载
 //   5. 权限与站点清单是否和代码里的 SITES 一致 / 没申请全站权限
-//   5b. 注入 content.js 的地方是否连带注入了 gesture-catalog.js
+//   5b. 注入 content.js 的地方是否连带注入了数据 / 图标 / 设计令牌
 //   6. popup.js 里 getElementById 用到的 id 是否真的存在
 //   7. 编码体检（防"中文变乱码"）
 //   8. 手势对照表数据自检
+//   9. 动作闸门分类是否齐全
+//  10. 打包排除清单不会把运行需要的文件排掉
+//  11. 设计令牌（theme.css）是否完整、浅色两处是否一致、三处界面用到的变量是否都有定义
+//  12. 主题模式（theme-mode.js）的纯逻辑：点一下外观一定变、三步内能转回跟随系统
 //
 // 跑法：node tests/integration-check.mjs
 //
@@ -168,30 +172,50 @@ if (manifest) {
     { hosts, allMatches });
 }
 
-// ---------- 5b. 注入 content.js 的地方必须连数据文件一起注入 ----------
-// content.js 里的手势对照表要用 gesture-catalog.js 的数据；
-// 少注入一处，那个场景下手势表就是空的。
+// ---------- 5b. 注入 content.js 的地方必须连数据 / 图标 / 令牌一起注入 ----------
+// content.js 里的手势对照表用 gesture-catalog.js 的数据、标题栏图标用 ui-icons.js，
+// 页面内面板的颜色来自 theme.css（用 insertCSS 插进页面）。
+// 少注入一处，那个场景下面板就会"空一块 / 没样式"，而且很难查。
 {
+  const collectLists = (text) => {
+    const lists = [];
+    for (const m of text.matchAll(/files:\s*\[([^\]]*)\]/g)) lists.push(m[1]);
+    // background.js 把清单抽成了命名常量：const CONTENT_FILES = [...]
+    for (const m of text.matchAll(/CONTENT_FILES\s*=\s*\[([^\]]*)\]/g)) lists.push(m[1]);
+    return lists;
+  };
+  const REQUIRED = ['gesture-catalog.js', 'ui-icons.js', 'theme-mode.js'];
+
   for (const file of ['background.js', 'popup.js', 'float.js']) {
     if (!existsSync(at(file))) continue;
     const text = read(file);
-    const lists = [];
-    for (const m of text.matchAll(/files:\s*\[([^\]]*)\]/g)) lists.push(m[1]);
-    record('5b-注入清单', file + ' 至少有一处注入 content.js', lists.length > 0, { lists });
-    for (const list of lists) {
-      if (list.indexOf('content.js') === -1) continue;
-      record('5b-注入清单', file + ' 注入 content.js 时带上 gesture-catalog.js',
-        list.indexOf('gesture-catalog.js') !== -1, { list: list.trim() });
+    const lists = collectLists(text);
+    const contentLists = lists.filter((l) => l.indexOf('content.js') !== -1);
+    record('5b-注入清单', file + ' 至少有一处注入 content.js', contentLists.length > 0, { lists });
+    for (const list of contentLists) {
+      for (const need of REQUIRED) {
+        record('5b-注入清单', file + ' 注入 content.js 时带上 ' + need,
+          list.indexOf(need) !== -1, { list: list.trim() });
+      }
+      const before = REQUIRED.every((need) => list.indexOf(need) < list.indexOf('content.js'));
+      record('5b-注入清单', file + ' 的数据 / 图标 / 主题排在 content.js 前面', before, { list: list.trim() });
     }
+    // 补注入时还要把 theme.css 插进去，否则页面里没有 --gvc-* 令牌
+    record('5b-注入清单', file + ' 注入内容脚本时一并插入 theme.css',
+      /insertCSS\([\s\S]{0,240}theme\.css/.test(text), {});
   }
   if (manifest) {
     for (const cs of manifest.content_scripts || []) {
       const js = cs.js || [];
       if (js.indexOf('content.js') === -1) continue;
-      record('5b-注入清单', 'manifest 的 content_scripts 带上 gesture-catalog.js',
-        js.indexOf('gesture-catalog.js') !== -1, { js });
-      record('5b-注入清单', 'manifest 里数据文件排在 content.js 前面',
-        js.indexOf('gesture-catalog.js') < js.indexOf('content.js'), { js });
+      for (const need of REQUIRED) {
+        record('5b-注入清单', 'manifest 的 content_scripts 带上 ' + need,
+          js.indexOf(need) !== -1, { js });
+      }
+      record('5b-注入清单', 'manifest 里数据 / 图标 / 主题排在 content.js 前面',
+        REQUIRED.every((need) => js.indexOf(need) < js.indexOf('content.js')), { js });
+      record('5b-注入清单', 'manifest 的 content_scripts 注入 theme.css（页面内面板的令牌来源）',
+        (cs.css || []).indexOf('theme.css') !== -1, { css: cs.css });
     }
   }
 }
@@ -231,10 +255,11 @@ for (const [js, html] of [['popup.js', 'popup.html'], ['grant.js', 'grant.html']
     'manifest.json', 'background.js', 'health.js', 'gesture.js', 'gesture-catalog.js',
     'action-policy.js', 'content.js', 'offscreen.js', 'offscreen.html', 'popup.js',
     'popup.html', 'popup.css', 'float.js', 'float.html', 'float.css',
+    'theme.css', 'ui-icons.js', 'theme-mode.js',
     'grant.js', 'grant.html', 'README.md', '.gitignore', 'AGENTS.md',
     'tests/run-all.mjs', 'tests/integration-check.mjs', 'tests/gesture-selftest.mjs',
     'tests/engine-sim.mjs', 'tests/health-selftest.mjs', 'tests/policy-selftest.mjs',
-    'tests/hand-model.mjs', 'tests/gesture-inspect.mjs'
+    'tests/hand-model.mjs', 'tests/gesture-inspect.mjs', 'tests/build-ui-preview.mjs'
   ];
   for (const file of textFiles) {
     if (!existsSync(at(file))) continue;
@@ -345,6 +370,13 @@ for (const [js, html] of [['popup.js', 'popup.html'], ['grant.js', 'grant.html']
   const excludedDirs = pick('excludeDirs');
   const excludedFiles = pick('excludeFiles');
 
+  // pack-crx.ps1 里全是中文注释：没有 UTF-8 BOM 时 Windows PowerShell 5.1
+  // 会按 GBK 读，脚本直接语法报错。（编辑工具保存时会吃掉 BOM，所以必须自动盯着。）
+  const packBytes = readFileSync(at('pack-crx.ps1'));
+  record('10-打包清单', 'pack-crx.ps1 带 UTF-8 BOM（否则 PowerShell 5.1 读中文会乱码）',
+    packBytes[0] === 0xEF && packBytes[1] === 0xBB && packBytes[2] === 0xBF,
+    { first3: Array.from(packBytes.slice(0, 3)) });
+
   record('10-打包清单', '能解析出排除目录（' + excludedDirs.length + ' 个）', excludedDirs.length > 0, { excludedDirs });
   record('10-打包清单', '排除了 .git（否则用户的 .crx 里会带上完整提交历史）',
     excludedDirs.indexOf('.git') !== -1, { excludedDirs });
@@ -354,6 +386,8 @@ for (const [js, html] of [['popup.js', 'popup.html'], ['grant.js', 'grant.html']
     excludedDirs.indexOf('tests') !== -1, { excludedDirs });
   record('10-打包清单', '排除了 dist（产物本身不该再进包）',
     excludedDirs.indexOf('dist') !== -1, { excludedDirs });
+  record('10-打包清单', '排除了 assets（设计预览页这类素材不该进 .crx）',
+    excludedDirs.indexOf('assets') !== -1, { excludedDirs });
   record('10-打包清单', '没有把 vendor/ 排掉（MediaPipe 运行时与模型都在里面）',
     excludedDirs.indexOf('vendor') === -1, { excludedDirs });
   record('10-打包清单', '没有把 icons/ 排掉', excludedDirs.indexOf('icons') === -1, { excludedDirs });
@@ -363,7 +397,10 @@ for (const [js, html] of [['popup.js', 'popup.html'], ['grant.js', 'grant.html']
   if (manifest) {
     if (manifest.background && manifest.background.service_worker) needed.add(manifest.background.service_worker);
     if (manifest.action && manifest.action.default_popup) needed.add(manifest.action.default_popup);
-    for (const cs of manifest.content_scripts || []) for (const f of cs.js || []) needed.add(f);
+    for (const cs of manifest.content_scripts || []) {
+      for (const f of cs.js || []) needed.add(f);
+      for (const f of cs.css || []) needed.add(f);
+    }
     for (const v of Object.values(manifest.icons || {})) needed.add(v);
     for (const v of Object.values((manifest.action && manifest.action.default_icon) || {})) needed.add(v);
   }
@@ -384,6 +421,172 @@ for (const [js, html] of [['popup.js', 'popup.html'], ['grant.js', 'grant.html']
       excludedDirs.indexOf(top) === -1 && excludedFiles.indexOf(file) === -1,
       { file, top, excludedDirs, excludedFiles });
   }
+}
+
+// ---------- 11. 设计令牌（theme.css）与主题切换 ----------
+// 四处界面（弹窗 / 悬浮窗 / 授权页 / 页面内面板）都只写 var(--gvc-xxx)，色值全在 theme.css。
+// 这里查：
+//   1) 令牌确实定义了，深浅两套都有，且和主题无关的那批（圆角/字体/动效）也在；
+//   2) 用到的每个令牌都真的有定义（写错一个名字就会静默掉色）；反向也没有死令牌；
+//   3) 浅色值写了两遍（跟随系统一份、手动指定一份），两处必须逐字一致；
+//   4) 关闭动画偏好有降级（不然有人会被一直动的扫描线晃到）。
+{
+  const theme = read('theme.css');
+  const parseTokens = (text) => {
+    const map = new Map();
+    for (const m of text.matchAll(/(--gvc-[\w-]+)\s*:\s*([^;}]+)/g)) map.set(m[1], m[2].trim());
+    return map;
+  };
+  // 从某个片段起点切到该规则结束（第一个顶格的 }）
+  const blockFrom = (start) => {
+    const i = theme.indexOf(start);
+    if (i === -1) return '';
+    const j = theme.indexOf('\n}', i);
+    return theme.slice(i, j === -1 ? theme.length : j);
+  };
+
+  const base = parseTokens(blockFrom(':root {'));                            // 与主题无关的令牌
+  const dark = parseTokens(blockFrom(':root,\n[data-gvc-theme="dark"]'));    // 深色（默认 + 手动深色）
+  const lightMedia = parseTokens(blockFrom('@media (prefers-color-scheme: light)')); // 浅色：跟随系统
+  const lightAttr = parseTokens(blockFrom('[data-gvc-theme="light"]'));      // 浅色：手动指定
+  const defined = new Map([...base, ...dark]);
+
+  record('11-主题令牌', 'theme.css 定义了令牌（' + defined.size + ' 个，要求 ≥ 20）',
+    defined.size >= 20, { base: base.size, dark: dark.size });
+  record('11-主题令牌', '深色写在同一处规则里，且手动指定深色也生效',
+    /:root,\s*\n\[data-gvc-theme="dark"\]\s*\{/.test(theme), {});
+
+  const MUST_SWITCH = [
+    '--gvc-bg', '--gvc-surface', '--gvc-surface-hi', '--gvc-line', '--gvc-text',
+    '--gvc-text-dim', '--gvc-accent', '--gvc-ok', '--gvc-warn', '--gvc-err',
+    '--gvc-hairline', '--gvc-shadow-sm', '--gvc-stage', '--gvc-stage-text'
+  ];
+  for (const name of MUST_SWITCH) {
+    record('11-主题令牌', '浅色主题覆盖了 ' + name, lightMedia.has(name) && lightAttr.has(name), { name });
+  }
+  record('11-主题令牌', '浅色的底色 / 文字确实和深色不同（防止把深色块复制粘贴过去）',
+    lightMedia.get('--gvc-bg') !== dark.get('--gvc-bg') &&
+    lightMedia.get('--gvc-text') !== dark.get('--gvc-text'),
+    { darkBg: dark.get('--gvc-bg'), lightBg: lightMedia.get('--gvc-bg') });
+
+  // 浅色值写了两遍（媒体查询一份、属性选择器一份）：必须逐条一致
+  {
+    record('11-主题令牌', '浅色值两处都能解析出来（跟随系统 ' + lightMedia.size + ' 项 / 手动指定 ' + lightAttr.size + ' 项）',
+      lightMedia.size > 10 && lightAttr.size > 10, { media: lightMedia.size, attr: lightAttr.size });
+    const diff = [];
+    for (const [k, v] of lightAttr) if (lightMedia.get(k) !== v) diff.push(k + '（手动 ' + v + ' / 系统 ' + lightMedia.get(k) + '）');
+    for (const [k] of lightMedia) if (!lightAttr.has(k)) diff.push(k + '（只在跟随系统那份里）');
+    record('11-主题令牌', '两处浅色值逐条一致（改一处忘一处会被这里抓住）', diff.length === 0, { diff });
+  }
+
+  record('11-主题令牌', '有关闭动画偏好的降级（prefers-reduced-motion → 动画 none）',
+    /prefers-reduced-motion/.test(theme) && /--gvc-pulse-anim:\s*none/.test(theme) &&
+    /--gvc-scan-anim:\s*none/.test(theme), {});
+
+  const surfaces = {
+    'popup.css': read('popup.css'),
+    'float.css': read('float.css'),
+    'content.js（页面内面板）': read('content.js'),
+    'gesture-catalog.js': read('gesture-catalog.js')
+  };
+  for (const [name, text] of Object.entries(surfaces)) {
+    const used = new Set();
+    for (const m of text.matchAll(/var\(\s*(--gvc-[\w-]+)/g)) used.add(m[1]);
+    const missing = Array.from(used).filter((v) => !defined.has(v));
+    record('11-主题令牌', name + ' 用到的 ' + used.size + ' 个令牌都有定义',
+      used.size > 0 && missing.length === 0, { missing });
+  }
+  record('11-主题令牌', 'popup.html 与 float.html 都引了 theme.css',
+    read('popup.html').indexOf('theme.css') !== -1 && read('float.html').indexOf('theme.css') !== -1, {});
+  record('11-主题令牌', '页面内面板的颜色走令牌（.gvc-panel 用的是 var(--gvc-*)）',
+    /\.gvc-panel \{[\s\S]{0,400}?var\(--gvc-bg/.test(read('content.js')), {});
+  record('11-主题令牌', '弹窗 / 悬浮窗的图标都是内联 SVG（不再用 emoji 当图标）',
+    read('popup.html').indexOf('data-icon=') !== -1 && read('float.html').indexOf('data-icon=') !== -1 &&
+    read('content.js').indexOf('data-icon=') !== -1, {});
+
+  // 反向：定义了的令牌必须有人用 —— 免得 theme.css 里堆一堆没人用的死色值
+  {
+    const surfacesWithTokens = [
+      'popup.css', 'float.css', 'content.js', 'gesture-catalog.js',
+      'grant.html', 'popup.html', 'float.html'
+    ];
+    const usedAll = new Set();
+    for (const f of surfacesWithTokens) {
+      if (!existsSync(at(f))) continue;
+      for (const m of read(f).matchAll(/var\(\s*(--gvc-[\w-]+)/g)) usedAll.add(m[1]);
+    }
+    const unused = Array.from(defined.keys()).filter((v) => !usedAll.has(v));
+    record('11-主题令牌', 'theme.css 里的令牌都有人用（没有死令牌）', unused.length === 0, { unused });
+  }
+}
+
+// ---------- 12. 主题模式（theme-mode.js 的纯逻辑）----------
+// 主题按钮点一下必须"看得见变化"，而且要能转回「跟随系统」——
+// 这两条是纯逻辑，可以脱离浏览器直接测。
+{
+  const Mode = new Function(read('theme-mode.js') + '\n;return globalThis.ThemeMode;')();
+  record('12-主题模式', 'theme-mode.js 能加载并给出 resolve / nextMode',
+    typeof Mode.resolve === 'function' && typeof Mode.nextMode === 'function', {});
+
+  record('12-主题模式', '跟随系统 + 系统浅色 → 浅色', Mode.resolve('auto', true) === 'light', {});
+  record('12-主题模式', '跟随系统 + 系统深色 → 深色', Mode.resolve('auto', false) === 'dark', {});
+  record('12-主题模式', '手动选了浅色就不再受系统影响', Mode.resolve('light', false) === 'light', {});
+  record('12-主题模式', '手动选了深色就不再受系统影响', Mode.resolve('dark', true) === 'dark', {});
+  record('12-主题模式', '乱七八糟的值当跟随系统处理', Mode.resolve('rainbow', false) === 'dark', {});
+
+  for (const systemLight of [false, true]) {
+    const tag = systemLight ? '（系统浅色）' : '（系统深色）';
+    // 从默认的「跟随系统」点第一下，外观必须变（否则用户以为按钮坏了）
+    record('12-主题模式', '从「跟随系统」点一下外观一定变' + tag,
+      Mode.resolve(Mode.nextMode('auto', systemLight), systemLight) !== Mode.resolve('auto', systemLight),
+      { next: Mode.nextMode('auto', systemLight) });
+
+    // 从任意状态出发，连点三次必须回到起点，且三种状态都出现过（说明这是个真循环）
+    for (const start of Mode.MODES) {
+      let cur = start;
+      const seen = [cur];
+      for (let i = 0; i < Mode.MODES.length; i++) {
+        cur = Mode.nextMode(cur, systemLight);
+        seen.push(cur);
+      }
+      record('12-主题模式', '连点三次回到原状态：' + seen.join(' → ') + tag,
+        seen[0] === seen[Mode.MODES.length] && new Set(seen).size === Mode.MODES.length, { seen });
+    }
+
+    // 三格里最多只有一格"看不出颜色变化"，而且那一格必须是回到「跟随系统」
+    // （它本来就等于系统主题，这是三态循环的固有性质）
+    {
+      const invisible = [];
+      for (const from of Mode.MODES) {
+        const to = Mode.nextMode(from, systemLight);
+        if (Mode.resolve(to, systemLight) === Mode.resolve(from, systemLight)) invisible.push(from + ' → ' + to);
+      }
+      record('12-主题模式', '看不出颜色变化的那一格最多只有一个' + tag + '：' + (invisible.join('；') || '没有'),
+        invisible.length <= 1, { invisible });
+      record('12-主题模式', '而那一格必须是"回到跟随系统"' + tag,
+        invisible.every((edge) => edge.endsWith('→ auto')), { invisible });
+    }
+  }
+
+  record('12-主题模式', '按钮提示会写明当前状态和下一步',
+    Mode.title('auto', false).indexOf('跟随系统') !== -1 && Mode.title('auto', false).indexOf('浅色') !== -1, 
+    { title: Mode.title('auto', false) });
+  record('12-主题模式', '三种状态各有自己的图标',
+    new Set(Mode.MODES.map((m) => Mode.ICON[m])).size === Mode.MODES.length, { icons: Mode.MODES.map((m) => Mode.ICON[m]) });
+
+  // 接线：三个界面都要加载 theme-mode.js，主题按钮都要带统一的 data-theme-toggle
+  // （预览页和这条自测都靠这个属性找按钮；漏一个就会出现"按钮是空的"）
+  record('12-主题模式', '弹窗 / 悬浮窗 / 授权页都加载了 theme-mode.js',
+    read('popup.html').indexOf('theme-mode.js') !== -1 &&
+    read('float.html').indexOf('theme-mode.js') !== -1 &&
+    read('grant.html').indexOf('theme-mode.js') !== -1, {});
+  record('12-主题模式', '三处界面的主题按钮都带 data-theme-toggle',
+    read('popup.html').indexOf('data-theme-toggle') !== -1 &&
+    read('float.html').indexOf('data-theme-toggle') !== -1 &&
+    read('content.js').indexOf('data-theme-toggle') !== -1, {});
+  record('12-主题模式', '页面内面板把主题写在宿主元素上（不碰网站自己的 <html>）',
+    /ThemeMode\.init\(\{\s*root:\s*false\s*\}\)/.test(read('content.js')) &&
+    /ThemeMode\.track\(/.test(read('content.js')), {});
 }
 
 // ---------- 汇总 ----------

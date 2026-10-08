@@ -24,6 +24,15 @@
   // ---------- 配置 ----------
   const TOAST_DURATION = 1500; // 提示浮层显示时长（毫秒）
 
+  // ---------- 主题 ----------
+  // 面板 / 提示浮层长在别人的网页里，颜色是从页面 :root 继承进 Shadow DOM 的。
+  // root:false = 不要碰网站的 <html>；改成把 data-gvc-theme 写在**我们自己的宿主元素**上，
+  // 它自己的声明会盖掉继承来的值，于是面板能单独跟用户的主题选择走。
+  function initContentTheme() {
+    if (!globalThis.ThemeMode) return;
+    ThemeMode.init({ root: false });
+  }
+
   // “下一集 / 上一集”按钮选择器（按优先级排列）。
   // 遇到其它视频网站时，可以在这里补充对应的选择器。
   const NEXT_SELECTORS = [
@@ -480,43 +489,55 @@
   let toastBox = null;
   let toastTimer = null;
 
-  function showToast(text, duration) {
-    if (!toastHost) {
-      toastHost = document.createElement('div');
-      toastHost.id = 'gesture-video-control-toast-host';
-      // Shadow DOM：页面的 CSS 无法影响浮层，浮层也不会污染页面样式
-      const shadow = toastHost.attachShadow({ mode: 'open' });
-      toastBox = document.createElement('div');
-      // 通过 CSSOM（style 属性）设置样式，不受页面 CSP 的限制
-      Object.assign(toastBox.style, {
-        position: 'fixed',
-        top: '20px',
-        right: '20px',
-        padding: '10px 16px',
-        borderRadius: '10px',
-        background: 'rgba(10, 16, 28, 0.92)',
-        color: '#ffffff',
-        fontSize: '14px',
-        fontFamily: '"Microsoft YaHei", system-ui, sans-serif',
-        lineHeight: '1.5',
-        boxShadow: '0 6px 20px rgba(0, 0, 0, 0.35)',
-        zIndex: '2147483647',
-        pointerEvents: 'none',
-        opacity: '0',
-        transform: 'translateY(-8px)',
-        transition: 'opacity 0.25s ease, transform 0.25s ease'
-      });
-      shadow.appendChild(toastBox);
-      document.documentElement.appendChild(toastHost);
-    }
+  // 浮层样式写进 Shadow DOM 自己的 <style> 里：不碰页面的 CSS，也不会被页面 CSS 影响。
+  // 颜色走 theme.css 的令牌（页面 :root 上的自定义属性会继承进 Shadow DOM）。
+  function toastCss() {
+    return `
+      .gvc-toast {
+        position: fixed; top: 20px; right: 20px;
+        max-width: 320px;
+        padding: 10px 15px 10px 13px;
+        border-radius: var(--gvc-radius, 12px);
+        background: var(--gvc-surface, #141A22);
+        color: var(--gvc-text, #E6EDF6);
+        border: 1px solid var(--gvc-line, rgba(255,255,255,.07));
+        border-left: 3px solid var(--gvc-accent, #4F8BFF);
+        box-shadow: var(--gvc-shadow-lg, 0 26px 60px -22px rgba(0,0,0,.9));
+        font-family: var(--gvc-font, system-ui, sans-serif);
+        font-size: 13.5px; line-height: 1.5;
+        z-index: 2147483647; pointer-events: none;
+        opacity: 0; transform: translateY(-8px);
+        transition: opacity var(--gvc-base, 180ms) var(--gvc-ease, ease),
+                    transform var(--gvc-base, 180ms) var(--gvc-ease, ease);
+      }
+      .gvc-toast.on { opacity: 1; transform: translateY(0); }
+    `;
+  }
 
+  function ensureToast() {
+    if (toastHost) return;
+    toastHost = document.createElement('div');
+    toastHost.id = 'gesture-video-control-toast-host';
+    // 浮层也跟着用户选的主题（属性写在宿主上，不碰网站 DOM）
+    if (globalThis.ThemeMode) ThemeMode.track(toastHost);
+    // Shadow DOM：页面的 CSS 无法影响浮层，浮层也不会污染页面样式
+    const shadow = toastHost.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    style.textContent = toastCss();
+    toastBox = document.createElement('div');
+    toastBox.className = 'gvc-toast';
+    shadow.appendChild(style);
+    shadow.appendChild(toastBox);
+    document.documentElement.appendChild(toastHost);
+  }
+
+  function showToast(text, duration) {
+    ensureToast();
     toastBox.textContent = text;
-    toastBox.style.opacity = '1';
-    toastBox.style.transform = 'translateY(0)';
+    toastBox.classList.add('on');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
-      toastBox.style.opacity = '0';
-      toastBox.style.transform = 'translateY(-8px)';
+      toastBox.classList.remove('on');
     }, duration || TOAST_DURATION);
   }
 
@@ -555,100 +576,256 @@
   let panelPreviewStream = null;
   let panelMinimized = false;
 
+  // 面板样式：注进 Shadow DOM 的 <style>，和弹窗（popup.css）/ 悬浮窗（float.css）
+  // 是同一套观感 —— 颜色全部走 theme.css 的 --gvc-* 令牌。
+  // 令牌来自页面 :root（manifest 的 content_scripts.css 注入），自定义属性会继承
+  // 进 Shadow DOM；var() 里的兜底值则是万一令牌没到位也不至于变成一个透明框。
   function panelCss() {
     return `
       * { box-sizing: border-box; margin: 0; padding: 0; }
+      .gvc-icon { display: block; }
+
+      /* ---------- 面板本体：玻璃卡片 ---------- */
       .gvc-panel {
         position: fixed; z-index: 2147483646;
         width: 300px; height: 470px;
         min-width: 220px; min-height: 180px;
-        background: #ffffff;
-        border-radius: 12px;
-        box-shadow: 0 12px 36px rgba(0,0,0,.28);
         display: flex; flex-direction: column;
         overflow: hidden;
-        font-family: "Microsoft YaHei", system-ui, sans-serif;
-        color: #1f2328;
+        background: var(--gvc-bg, #0A0D12);
+        color: var(--gvc-text, #E6EDF6);
+        border: 1px solid var(--gvc-line, rgba(255, 255, 255, .07));
+        border-radius: var(--gvc-radius, 12px);
+        box-shadow: var(--gvc-shadow-lg, 0 26px 60px -22px rgba(0, 0, 0, .9));
+        font-family: var(--gvc-font, system-ui, sans-serif);
+        font-size: 13px;
         user-select: none;
+        -webkit-font-smoothing: antialiased;
       }
       .gvc-panel.minimized { display: none; }
+      .gvc-panel :focus-visible { outline: 2px solid var(--gvc-accent, #4F8BFF); outline-offset: 2px; }
+
+      /* ---------- 标题栏 ---------- */
       .gvc-bar {
-        height: 38px; flex: none;
-        background: linear-gradient(135deg, #165dff, #4f8bff);
-        color: #fff;
-        display: flex; align-items: center;
-        padding: 0 8px 0 12px;
+        flex: none; height: 40px;
+        display: flex; align-items: center; gap: 4px;
+        padding: 0 6px 0 11px;
+        background: var(--gvc-bg-soft, #0E1218);
+        border-bottom: 1px solid var(--gvc-line, rgba(255, 255, 255, .07));
         cursor: move;
-        gap: 4px;
       }
-      .gvc-title { font-size: 13px; font-weight: 600; flex: 1; overflow: hidden; white-space: nowrap; }
+      .gvc-title {
+        flex: 1; min-width: 0;
+        display: flex; align-items: center; gap: 7px;
+        font-size: 12.5px; font-weight: 600; letter-spacing: .01em;
+        white-space: nowrap; overflow: hidden;
+      }
+      .gvc-logo { display: grid; place-items: center; color: var(--gvc-accent, #4F8BFF); }
       .gvc-bar button {
-        width: 24px; height: 24px; border: none; border-radius: 6px;
-        background: rgba(255,255,255,.16); color: #fff;
-        font-size: 12px; cursor: pointer; line-height: 1;
+        display: grid; place-items: center;
+        width: 27px; height: 27px;
+        border: none; border-radius: var(--gvc-radius-xs, 6px);
+        background: transparent; color: var(--gvc-text-dim, #8E9CB0);
+        font-family: inherit; cursor: pointer;
+        transition: background var(--gvc-fast, 120ms) var(--gvc-ease, ease),
+                    color var(--gvc-fast, 120ms) var(--gvc-ease, ease);
       }
-      .gvc-bar button:hover { background: rgba(255,255,255,.32); }
+      .gvc-bar button:hover { background: var(--gvc-surface-hi, #1B232E); color: var(--gvc-text, #E6EDF6); }
+      .gvc-bar button.active { background: var(--gvc-accent-soft, rgba(79, 139, 255, .15)); color: var(--gvc-accent-hi, #78A6FF); }
+
+      /* ---------- 摄像头画面（取景框 + 扫描线）---------- */
       .gvc-preview-wrap {
-        flex: none; height: 170px; background: #0b0e14;
+        position: relative; flex: none; height: 170px;
         display: flex; align-items: center; justify-content: center;
-        position: relative; overflow: hidden;
+        overflow: hidden;
+        background: var(--gvc-stage, #07090D);
       }
       .gvc-preview-wrap.hidden { display: none; }
+      /* 四角取景框 */
+      .gvc-preview-wrap::before {
+        content: ''; position: absolute; inset: 8px; z-index: 3; pointer-events: none;
+        background-image:
+          linear-gradient(currentColor, currentColor), linear-gradient(currentColor, currentColor),
+          linear-gradient(currentColor, currentColor), linear-gradient(currentColor, currentColor),
+          linear-gradient(currentColor, currentColor), linear-gradient(currentColor, currentColor),
+          linear-gradient(currentColor, currentColor), linear-gradient(currentColor, currentColor);
+        background-repeat: no-repeat;
+        background-position: 0 0, 0 0, 100% 0, 100% 0, 0 100%, 0 100%, 100% 100%, 100% 100%;
+        background-size: 14px 1.5px, 1.5px 14px, 14px 1.5px, 1.5px 14px,
+                         14px 1.5px, 1.5px 14px, 14px 1.5px, 1.5px 14px;
+        color: var(--gvc-stage-mark, rgba(255, 255, 255, .32));
+      }
+      /* 缓慢上移的扫描线 */
+      .gvc-preview-wrap::after {
+        content: ''; position: absolute; left: 0; right: 0; top: -36%; height: 36%;
+        z-index: 3; pointer-events: none;
+        background-image: linear-gradient(180deg, transparent, var(--gvc-accent-soft, rgba(79, 139, 255, .15)) 50%, transparent);
+        animation: var(--gvc-scan-anim, none);
+      }
+      @keyframes gvc-scan { from { top: -36%; } to { top: 100%; } }
+
       .gvc-preview {
         width: 100%; height: 100%; object-fit: cover; display: block;
         will-change: transform;
       }
       .gvc-preview-wrap.zoomed .gvc-preview { cursor: grab; }
       .gvc-preview-wrap.dragging .gvc-preview { cursor: grabbing; }
-      .gvc-placeholder { color: #9aa3af; font-size: 12px; text-align: center; padding: 0 12px; }
+      .gvc-placeholder {
+        /* 必须绝对定位：video 是 width/height 100% 的弹性子项，会把同级的
+           占位层挤成一条缝（文字变竖排）。和弹窗里的 .camera-placeholder 同一套做法。 */
+        position: absolute; inset: 0; z-index: 4;
+        display: flex; align-items: center; justify-content: center;
+        padding: 0 14px; text-align: center;
+        color: var(--gvc-stage-text, #7C8AA0);
+        font-size: 12px; letter-spacing: .02em;
+      }
       .gvc-zoom-badge {
-        position: absolute; right: 6px; bottom: 6px;
-        background: rgba(0,0,0,.55); color: #fff;
-        font-size: 11px; padding: 2px 7px; border-radius: 8px;
+        position: absolute; right: 6px; bottom: 6px; z-index: 4;
+        padding: 2px 7px; border-radius: 999px;
+        background: rgba(0, 0, 0, .55); color: #FFFFFF;
+        border: 1px solid rgba(255, 255, 255, .14);
+        font-family: var(--gvc-mono, monospace); font-size: 10.5px;
+        font-variant-numeric: tabular-nums;
         pointer-events: none;
       }
       .gvc-preview-resize {
-        position: absolute; left: 0; right: 0; bottom: 0;
+        position: absolute; left: 0; right: 0; bottom: 0; z-index: 5;
         height: 10px; cursor: ns-resize;
-        background: rgba(255,255,255,.06);
-        transition: background .15s ease;
-        z-index: 2;
+        background: rgba(255, 255, 255, .05);
+        transition: background var(--gvc-fast, 120ms) var(--gvc-ease, ease);
       }
-      .gvc-preview-resize:hover { background: rgba(22,93,255,.45); }
+      .gvc-preview-resize:hover { background: var(--gvc-accent-soft, rgba(79, 139, 255, .15)); }
       .gvc-preview-resize::after {
         content: ''; position: absolute; left: 50%; top: 50%;
-        transform: translate(-50%,-50%);
+        transform: translate(-50%, -50%);
         width: 28px; height: 3px; border-radius: 2px;
-        background: rgba(255,255,255,.45);
+        background: rgba(255, 255, 255, .40);
       }
+
+      /* ---------- 内容区 ---------- */
       .gvc-body {
-        flex: 1; padding: 10px 12px 12px;
+        flex: 1; min-height: 0;
+        padding: 10px 12px 12px;
         display: flex; flex-direction: column; gap: 8px;
         overflow-y: auto;
       }
-      .gvc-gesture { display: flex; align-items: center; gap: 10px; }
-      .gvc-gesture-emoji { font-size: 24px; }
-      .gvc-gesture-name { font-size: 15px; font-weight: 600; }
-      .gvc-gesture-detail { font-size: 11px; color: #8a919b; }
-      .gvc-status { font-size: 12px; color: #57606a; background: #f6f8ff; border-radius: 8px; padding: 6px 10px; }
-      .gvc-row { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
-      .gvc-row input { width: 34px; height: 18px; accent-color: #165dff; cursor: pointer; }
+      .gvc-body::-webkit-scrollbar { width: 8px; }
+      .gvc-body::-webkit-scrollbar-thumb { background: var(--gvc-line-strong, rgba(255,255,255,.14)); border-radius: 4px; }
+      .gvc-body::-webkit-scrollbar-track { background: transparent; }
+
+      .gvc-gesture {
+        display: flex; align-items: center; gap: 10px;
+        padding: 9px 11px;
+        background: var(--gvc-surface, #141A22);
+        border: 1px solid var(--gvc-line, rgba(255, 255, 255, .07));
+        border-radius: var(--gvc-radius, 12px);
+        box-shadow: var(--gvc-hairline, inset 0 1px 0 rgba(255, 255, 255, .06));
+      }
+      .gvc-gesture-info { min-width: 0; }
+      .gvc-gesture-emoji { flex: none; font-size: 24px; line-height: 1; }
+      .gvc-label { display: block; font-size: 10px; letter-spacing: .14em; color: var(--gvc-text-mute, #66738A); }
+      .gvc-gesture-name { display: block; margin-top: 2px; font-size: 14px; font-weight: 600; }
+      .gvc-gesture-detail { display: block; margin-top: 3px; font-size: 11px; line-height: 1.45; color: var(--gvc-text-dim, #8E9CB0); }
+
+      /* 状态行：彩色圆点 + 文字（和弹窗一致） */
+      .gvc-status {
+        display: flex; align-items: flex-start; gap: 8px;
+        padding: 7px 10px;
+        font-size: 11.5px; line-height: 1.5;
+        background: var(--gvc-surface, #141A22);
+        border: 1px solid var(--gvc-line, rgba(255, 255, 255, .07));
+        border-radius: var(--gvc-radius-sm, 9px);
+        color: var(--gvc-text-dim, #8E9CB0);
+      }
+      .gvc-status::before { content: ''; flex: none; width: 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: var(--gvc-text-mute, #66738A); }
+      .gvc-status.ok { background: var(--gvc-ok-soft, rgba(52, 211, 153, .13)); border-color: transparent; color: var(--gvc-ok-text, #6EE7B7); }
+      .gvc-status.ok::before { background: var(--gvc-ok, #34D399); }
+      .gvc-status.warn { background: var(--gvc-warn-soft, rgba(251, 191, 36, .13)); border-color: transparent; color: var(--gvc-warn-text, #FCD34D); }
+      .gvc-status.warn::before { background: var(--gvc-warn, #FBBF24); }
+      .gvc-status.error { background: var(--gvc-err-soft, rgba(248, 113, 113, .13)); border-color: transparent; color: var(--gvc-err-text, #FCA5A5); }
+      .gvc-status.error::before { background: var(--gvc-err, #F87171); }
+
+      /* 开关行：和弹窗用同一套轨道 / 滑块 */
+      .gvc-row {
+        display: flex; align-items: center; justify-content: space-between; gap: 10px;
+        padding: 9px 12px;
+        font-size: 12.5px; font-weight: 600;
+        background: var(--gvc-surface, #141A22);
+        border: 1px solid var(--gvc-line, rgba(255, 255, 255, .07));
+        border-radius: var(--gvc-radius, 12px);
+        box-shadow: var(--gvc-hairline, inset 0 1px 0 rgba(255, 255, 255, .06));
+        cursor: pointer;
+        transition: background var(--gvc-fast, 120ms) var(--gvc-ease, ease);
+      }
+      .gvc-row:hover { background: var(--gvc-surface-hi, #1B232E); }
+      .gvc-row input { display: none; }
+      .gvc-switch-track {
+        flex: none; position: relative;
+        width: 44px; height: 24px; border-radius: 999px;
+        background: var(--gvc-line-strong, rgba(255, 255, 255, .14));
+        box-shadow: inset 0 1px 2px rgba(0, 0, 0, .35);
+        transition: background var(--gvc-base, 180ms) var(--gvc-ease, ease),
+                    box-shadow var(--gvc-base, 180ms) var(--gvc-ease, ease);
+      }
+      .gvc-switch-thumb {
+        position: absolute; top: 3px; left: 3px;
+        width: 18px; height: 18px; border-radius: 50%;
+        background: #FFFFFF;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, .45);
+        transition: transform var(--gvc-base, 180ms) var(--gvc-ease, ease);
+      }
+      .gvc-row input:checked + .gvc-switch-track {
+        background-image: linear-gradient(180deg, var(--gvc-accent-hi, #78A6FF), var(--gvc-accent, #4F8BFF));
+        box-shadow: 0 0 0 3px var(--gvc-accent-soft, rgba(79, 139, 255, .15)), inset 0 1px 1px rgba(255, 255, 255, .25);
+      }
+      .gvc-row input:checked + .gvc-switch-track .gvc-switch-thumb { transform: translateX(20px); }
+      .gvc-row input:focus-visible + .gvc-switch-track { outline: 2px solid var(--gvc-accent, #4F8BFF); outline-offset: 2px; }
+
+      /* 手势对照表（内部 .gh-* 样式由 gesture-catalog.js 提供） */
+      .gvc-help { border-top: 1px solid var(--gvc-line, rgba(255, 255, 255, .07)); padding-top: 8px; }
+      .gvc-help[hidden] { display: none; }
+
+      /* ---------- 缩放手柄 ---------- */
       .gvc-resize {
         position: absolute; right: 0; bottom: 0;
         width: 18px; height: 18px; cursor: nwse-resize;
-        background: linear-gradient(135deg, transparent 50%, #b9c2d0 50%);
-        border-bottom-right-radius: 12px;
+        color: var(--gvc-line-strong, rgba(255, 255, 255, .14));
+        background-image: linear-gradient(135deg, transparent 55%, currentColor 55%);
+        border-bottom-right-radius: var(--gvc-radius, 12px);
+        transition: color var(--gvc-fast, 120ms) var(--gvc-ease, ease);
       }
+      .gvc-resize:hover { color: var(--gvc-accent, #4F8BFF); }
+
+      /* ---------- 最小化悬浮球 ---------- */
       .gvc-pill {
         position: fixed; z-index: 2147483647;
         right: 18px; bottom: 18px;
         width: 52px; height: 52px; border-radius: 50%;
-        background: linear-gradient(135deg, #165dff, #4f8bff);
-        color: #fff; display: flex; align-items: center; justify-content: center;
-        font-size: 24px; cursor: pointer;
-        box-shadow: 0 8px 24px rgba(22,93,255,.4);
+        display: flex; align-items: center; justify-content: center;
+        cursor: pointer;
+        background: var(--gvc-surface, #141A22);
+        color: var(--gvc-accent, #4F8BFF);
+        border: 1px solid var(--gvc-line-strong, rgba(255, 255, 255, .14));
+        box-shadow: var(--gvc-shadow-lg, 0 26px 60px -22px rgba(0, 0, 0, .9)),
+                    var(--gvc-hairline, inset 0 1px 0 rgba(255, 255, 255, .06));
+        transition: transform var(--gvc-fast, 120ms) var(--gvc-ease, ease),
+                    border-color var(--gvc-fast, 120ms) var(--gvc-ease, ease);
       }
+      .gvc-pill:hover { transform: translateY(-1px); border-color: var(--gvc-accent, #4F8BFF); }
       .gvc-pill.hidden { display: none; }
+      /* 状态小圆点：识别中变绿并缓慢呼吸 */
+      .gvc-pill::after {
+        content: ''; position: absolute; right: 4px; bottom: 4px;
+        width: 10px; height: 10px; border-radius: 50%;
+        background: var(--gvc-text-mute, #66738A);
+        border: 2px solid var(--gvc-surface, #141A22);
+      }
+      .gvc-pill.running::after { background: var(--gvc-ok, #34D399); animation: var(--gvc-pulse-anim, none); }
+      @keyframes gvc-pulse {
+        0% { box-shadow: 0 0 0 0 var(--gvc-ok-soft, rgba(52, 211, 153, .13)); }
+        70% { box-shadow: 0 0 0 7px transparent; }
+        100% { box-shadow: 0 0 0 0 transparent; }
+      }
     `;
   }
 
@@ -669,22 +846,19 @@
     const style = document.createElement('style');
     // 手势对照表的数据/渲染/样式在 gesture-catalog.js 里，和弹窗共用同一份
     const catalogCss = globalThis.GestureCatalog ? globalThis.GestureCatalog.css() : '';
-    const helpCss = `
-      .gvc-help { border-top: 1px solid #e6eaf2; padding-top: 8px; }
-      .gvc-help[hidden] { display: none; }
-    `;
-    style.textContent = panelCss() + catalogCss + helpCss;
+    style.textContent = panelCss() + catalogCss;
     panelShadow.appendChild(style);
 
     const root = document.createElement('div');
     root.className = 'gvc-panel';
     root.innerHTML = `
       <div class="gvc-bar">
-        <span class="gvc-title">🎮 手势视频控制</span>
-        <button data-act="help" title="手势对照表">📖</button>
-        <button data-act="preview" title="显示 / 隐藏摄像头画面">👁</button>
-        <button data-act="min" title="最小化">—</button>
-        <button data-act="close" title="关闭悬浮面板">✕</button>
+        <span class="gvc-title"><span class="gvc-logo" data-icon="logo" data-size="14"></span>手势视频控制</span>
+        <button data-act="theme" data-theme-toggle data-size="14" title="切换主题"></button>
+        <button data-act="help" title="手势对照表"><span data-icon="book" data-size="14"></span></button>
+        <button data-act="preview" title="显示 / 隐藏摄像头画面"><span data-icon="eye" data-size="14"></span></button>
+        <button data-act="min" title="最小化"><span data-icon="minus" data-size="14"></span></button>
+        <button data-act="close" title="关闭悬浮面板"><span data-icon="close" data-size="14"></span></button>
       </div>
       <div class="gvc-preview-wrap" title="滚轮缩放画面，双击重置，放大后按住拖动">
         <video class="gvc-preview" autoplay muted playsinline></video>
@@ -695,23 +869,31 @@
       <div class="gvc-body">
         <div class="gvc-gesture">
           <span class="gvc-gesture-emoji">🖐️</span>
-          <div>
+          <div class="gvc-gesture-info">
+            <span class="gvc-label">当前手势</span>
             <div class="gvc-gesture-name">等待识别…</div>
             <div class="gvc-gesture-detail"></div>
           </div>
         </div>
         <div class="gvc-status">正在连接后台识别…</div>
-        <label class="gvc-row"><span>手势控制</span><input type="checkbox" data-ctl="control"></label>
-        <label class="gvc-row"><span>短视频模式</span><input type="checkbox" data-ctl="short"></label>
+        <label class="gvc-row"><span>手势控制</span><input type="checkbox" data-ctl="control"><span class="gvc-switch-track"><span class="gvc-switch-thumb"></span></span></label>
+        <label class="gvc-row"><span>短视频模式</span><input type="checkbox" data-ctl="short"><span class="gvc-switch-track"><span class="gvc-switch-thumb"></span></span></label>
         <div class="gvc-help" hidden></div>
       </div>
       <div class="gvc-resize"></div>
     `;
+    // 标题栏图标：把 data-icon 占位换成内联 SVG（ui-icons.js）
+    if (globalThis.UIIcons) globalThis.UIIcons.mount(root);
+    // 主题：让面板宿主跟着用户选的主题走，并接管标题栏那个按钮
+    if (globalThis.ThemeMode) {
+      ThemeMode.track(panelHost);
+      ThemeMode.trackButton(root.querySelector('[data-theme-toggle]'));
+    }
     panelShadow.appendChild(root);
 
     const pill = document.createElement('div');
     pill.className = 'gvc-pill hidden';
-    pill.textContent = '🎮';
+    pill.innerHTML = globalThis.UIIcons ? globalThis.UIIcons.svg('logo', 24) : '🎮';
     pill.title = '恢复悬浮面板';
     panelShadow.appendChild(pill);
 
@@ -908,7 +1090,8 @@
     if (helpBtn && helpBox) {
       helpBtn.addEventListener('click', () => {
         helpBox.hidden = !helpBox.hidden;
-        helpBtn.style.background = helpBox.hidden ? '' : 'rgba(255,255,255,.32)';
+        // 展开时按钮常亮（用类名，别写死浅色背景，否则浅色主题下会发白）
+        helpBtn.classList.toggle('active', !helpBox.hidden);
       });
     }
 
@@ -938,7 +1121,7 @@
       }).then((r) => {
         if (r && r.ok === false) {
           ctl.checked = !on;
-          setPanelStatusText('❌ ' + ((r.error) || '启动失败'));
+          setPanelStatusText((r.error) || '启动失败', 'error');
         }
       }).catch(() => {});
     });
@@ -950,16 +1133,22 @@
     });
   }
 
-  function setPanelStatusText(text) {
+  // kind: 'ok' | 'warn' | 'error' —— 决定状态行左侧小圆点的颜色
+  function setPanelStatusText(text, kind) {
     if (!panelShadow) return;
     const s = panelShadow.querySelector('.gvc-status');
-    if (s) s.textContent = text;
+    if (!s) return;
+    s.textContent = text;
+    s.className = 'gvc-status' + (kind ? ' ' + kind : '');
   }
 
   function applyPanelStatus(s) {
     if (!panelShadow) return;
     const root = panelShadow.querySelector('.gvc-panel');
     if (!root) return;
+    const pill = panelShadow.querySelector('.gvc-pill');
+    // 悬浮球上的小圆点：识别运行中变绿并缓慢呼吸
+    if (pill) pill.classList.toggle('running', !!s.running);
     const name = root.querySelector('.gvc-gesture-name');
     const detail = root.querySelector('.gvc-gesture-detail');
     const emoji = root.querySelector('.gvc-gesture-emoji');
@@ -969,9 +1158,11 @@
     }
     if (s.detail) detail.textContent = s.detail;
     if (s.running) {
-      setPanelStatusText(s.errorText ? '❌ ' + s.errorText : '✅ 后台识别运行中');
+      // 状态本身已经用圆点颜色区分了，文案里就不用再塞 emoji
+      if (s.errorText) setPanelStatusText(s.errorText, 'error');
+      else setPanelStatusText('后台识别运行中', 'ok');
     } else {
-      setPanelStatusText('⏸ 后台识别未运行');
+      setPanelStatusText('后台识别未运行', 'warn');
     }
   }
 
@@ -1001,6 +1192,8 @@
 
   function hideFloatPanel() {
     stopPanelPreview();
+    // 面板要销毁了：从主题登记表里摘掉，免得一直留着引用
+    if (globalThis.ThemeMode) ThemeMode.untrack(panelHost);
     if (panelHost && panelHost.parentNode) {
       panelHost.parentNode.removeChild(panelHost);
     }
@@ -1172,4 +1365,7 @@
   reportPageInfo();
   // SPA 内部跳转时 URL 会变，轮询检测变化后重新上报
   setInterval(reportPageInfo, 3000);
+
+  // 主题：读一次用户的选择，之后显隐面板 / 浮层都跟着走（不碰网站自己的 DOM）
+  initContentTheme();
 })();
