@@ -299,11 +299,11 @@ node tests/build-ui-preview.mjs
 `tests/` 里有一套离线自测，用**正运动学合成一只手**，没有摄像头也能验证判定：
 
 ```bash
-node tests/run-all.mjs            # 一条命令跑完下面全部自测（推荐，共 669 项）
+node tests/run-all.mjs            # 一条命令跑完下面全部自测（推荐，共 670 项）
 node tests/integration-check.mjs  # 静态体检：manifest / HTML 引用 / 接口一致性 / 权限与站点清单 /
                                   #   DOM id / 编码 / 手势表数据 / 动作闸门分类 / 打包清单 /
                                   #   主题令牌（用到的变量都有定义、浅色两处一致、没有死令牌）/
-                                  #   主题模式（点一下外观一定变、三步内回到跟随系统），共 293 项
+                                  #   主题模式（点一下外观一定变、三步内回到跟随系统），共 294 项
 node tests/gesture-selftest.mjs   # 判定正确性：姿势 / 手歪手转 / 宽高比 / 左右手 / 抖动，共 229 项
 node tests/engine-sim.mjs         # 时序：抗抖动 / 跟手速度 / 稳定速度 / 主手不跳 / 漏检容错，共 13 项
 node tests/health-selftest.mjs    # 自检决策：识别页没了 / 卡死 / 目标页被关 / 脚本失效，共 44 项
